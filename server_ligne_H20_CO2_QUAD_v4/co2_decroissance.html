@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Analyse Décroissance</title>
+<script src="/static/xlsx.full.min.js"></script>
+<script src="/static/chart.umd.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{--bg:#f8f9fa;--panel:#fff;--card:#f1f5f9;--border:#cbd5e1;--text:#1e293b;--sub:#475569;
+  --violet:#5b21b6;--rose:#be185d;--orange:#b45309;--green:#16a34a;--font:'Segoe UI',sans-serif;}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+header{background:var(--violet);padding:9px 18px;color:#fff;font-size:14px;font-weight:700;flex-shrink:0;}
+.body{display:flex;flex:1;overflow:hidden;}
+.sidebar{width:270px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;padding:12px;}
+.stitle{font-size:10px;font-weight:700;color:var(--violet);text-transform:uppercase;letter-spacing:1px;margin:12px 0 5px;}
+.sidebar label{font-size:11px;color:var(--sub);display:block;margin-bottom:2px;}
+.sidebar select,.sidebar input[type=number]{width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;background:var(--card);color:var(--text);margin-bottom:8px;}
+.btn{display:block;width:100%;padding:7px;border:none;border-radius:4px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:5px;color:#fff;text-align:center;}
+.results{font-size:11px;line-height:1.9;margin-top:6px;}
+.fit-box{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-top:6px;font-size:11px;line-height:1.8;}
+.fit-box b{color:var(--text);}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;flex:1;gap:6px;padding:8px;overflow:hidden;min-height:0;}
+.chart-panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;position:relative;padding:24px 6px 6px 6px;min-height:0;overflow:hidden;}
+.chart-panel canvas{position:absolute;inset:24px 6px 6px 6px;width:calc(100% - 12px)!important;height:calc(100% - 30px)!important;}
+.chart-panel .ctitle{position:absolute;top:6px;left:10px;font-size:10px;font-weight:700;pointer-events:none;}
+.span2{grid-column:span 2;}
+</style>
+</head>
+<body>
+<header>📉 Analyse Décroissance — Signal par cycle</header>
+<div class="body">
+
+<div class="sidebar">
+  <div class="stitle">📂 Fichier Excel</div>
+  <div id="fname" style="font-size:11px;color:var(--sub);margin-bottom:6px">Aucun fichier</div>
+  <label class="btn" style="background:var(--violet);cursor:pointer">
+    Ouvrir .xlsx
+    <input type="file" accept=".xlsx,.xls" id="file-input" style="display:none">
+  </label>
+
+  <div class="stitle">⚙ Colonnes</div>
+  <label>Signal</label><select id="col-signal"></select>
+  <label>Masse</label><select id="col-masse"></select>
+  <label>Cycle</label><select id="col-cycle"></select>
+
+  <div class="stitle">🎯 Paramètres</div>
+  <label>Masse cible (m/z)</label>
+  <input type="number" id="target-mass" value="44" step="0.5">
+  <label>Tolérance ±</label>
+  <input type="number" id="mass-tol" value="0.4" step="0.05">
+  <label>Seuil détection bruit (ratio)</label>
+  <input type="number" id="seuil" value="3.0" step="0.1">
+
+  <button class="btn" style="background:var(--violet)" onclick="analyse()">▶ Analyser</button>
+  <button class="btn" style="background:#475569" onclick="exportExcel()">💾 Export Excel</button>
+
+  <div id="results" class="results"></div>
+</div>
+
+<div class="main">
+  <div class="charts-grid">
+    <div class="chart-panel span2">
+      <div class="ctitle" style="color:var(--sub)">Signal brut — tous les cycles (gris = bruit, coloré = signal)</div>
+      <canvas id="chart-spectra"></canvas>
+    </div>
+    <div class="chart-panel">
+      <div class="ctitle" style="color:var(--violet)">Décroissance — Aire (trapèzes)</div>
+      <canvas id="chart-aire"></canvas>
+    </div>
+    <div class="chart-panel">
+      <div class="ctitle" style="color:var(--rose)">Décroissance — Pic maximum</div>
+      <canvas id="chart-pic"></canvas>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+let df = null, cycles = [], resData = null;
+const charts = {};
+
+// ── Fichier ──────────────────────────────────────────────────────────
+document.getElementById('file-input').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  document.getElementById('fname').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const wb  = XLSX.read(ev.target.result, {type:'array'});
+    const ws  = wb.Sheets[wb.SheetNames[0]];
+    df = XLSX.utils.sheet_to_json(ws, {defval:''});
+    if (!df.length) return;
+    const cols = Object.keys(df[0]);
+    ['col-signal','col-masse','col-cycle'].forEach(id => {
+      document.getElementById(id).innerHTML = cols.map(c=>`<option>${c}</option>`).join('');
+    });
+    // Auto-détection
+    const low = cols.map(c=>c.toLowerCase());
+    const find = kw => { const i=low.findIndex(c=>c.includes(kw)); return i>=0?cols[i]:cols[0]; };
+    document.getElementById('col-signal').value = find('signal');
+    document.getElementById('col-masse').value  = find('masse');
+    document.getElementById('col-cycle').value  = find('cycle');
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+// ── Trapèze ──────────────────────────────────────────────────────────
+function trapz(xs, ys) {
+  let s = 0;
+  for (let i = 0; i < xs.length-1; i++) s += (xs[i+1]-xs[i]) * (ys[i]+ys[i+1]) / 2;
+  return Math.abs(s);
+}
+
+// ── Fit exponentiel — gradient descent normalisé ────────────────────
+// Normalisation sur ys[0] pour stabiliser la convergence sur des valeurs ~1e-10
+function fitExpo(ts, ys) {
+  if (!ts || ts.length < 4) return null;
+  const scale = ys[0];
+  if (scale === 0) return null;
+  const yn = ys.map(v => v / scale);
+
+  // Initialisation
+  let A   = Math.max(yn[0] - yn[yn.length-1], 1e-6);
+  let lam = 0.2;
+  let off = yn[yn.length-1];
+
+  const lr = 1e-3;
+  const iters = 6000;
+
+  for (let k = 0; k < iters; k++) {
+    let gA=0, glam=0, goff=0;
+    for (let i=0; i<ts.length; i++) {
+      const e   = Math.exp(-lam * ts[i]);
+      const res = A*e + off - yn[i];
+      gA   += res * e;
+      glam += res * (-A * ts[i] * e);
+      goff += res;
+    }
+    A   -= lr * 2 * gA;
+    lam -= lr * 2 * glam * 0.1;
+    off -= lr * 2 * goff;
+    if (A   < 1e-9) A   = 1e-9;
+    if (lam < 1e-6) lam = 1e-6;
+  }
+
+  // Dénormaliser
+  const A_real   = A * scale;
+  const off_real = off * scale;
+
+  // R² sur les données brutes
+  const ymean = ys.reduce((a,b)=>a+b,0)/ys.length;
+  let ss_res=0, ss_tot=0;
+  const yhat = ts.map(t => A_real * Math.exp(-lam*t) + off_real);
+  for (let i=0; i<ys.length; i++) {
+    ss_res += (ys[i]-yhat[i])**2;
+    ss_tot += (ys[i]-ymean)**2;
+  }
+  const r2 = ss_tot > 0 ? 1 - ss_res/ss_tot : 0;
+
+  const tau   = 1 / lam;
+  const thalf = Math.log(2) / lam;
+  return { A: A_real, lam, offset: off_real, tau, thalf, r2, yhat };
+}
+// ── Analyse principale ────────────────────────────────────────────────
+function analyse() {
+  if (!df) return;
+  const cs = document.getElementById('col-signal').value;
+  const cm = document.getElementById('col-masse').value;
+  const cc = document.getElementById('col-cycle').value;
+  const targetMass = parseFloat(document.getElementById('target-mass').value) || 44;
+  const tol        = parseFloat(document.getElementById('mass-tol').value)    || 0.4;
+  const seuil      = parseFloat(document.getElementById('seuil').value)        || 3.0;
+
+  // Parser les données
+  const rows = df.map(r => ({
+    cycle:  isNaN(parseFloat(r[cc])) ? r[cc] : parseFloat(r[cc]),
+    masse:  parseFloat(r[cm]) || 0,
+    signal: parseFloat(r[cs]) || 0,
+  }));
+
+  // Cycles triés numériquement
+  cycles = [...new Set(rows.map(r=>r.cycle))].sort((a,b)=>{
+    const na=parseFloat(a), nb=parseFloat(b);
+    return (!isNaN(na)&&!isNaN(nb)) ? na-nb : String(a).localeCompare(String(b));
+  });
+
+  // Calcul aire et pic par cycle pour la masse cible
+  const res = cycles.map(c => {
+    const sub = rows.filter(r=>r.cycle===c && Math.abs(r.masse-targetMass)<=tol)
+                    .sort((a,b)=>a.masse-b.masse);
+    if (sub.length < 2) return {cycle:c, aire:0, pic:0, n:sub.length};
+    const aire = trapz(sub.map(r=>r.masse), sub.map(r=>r.signal));
+    const pic  = Math.max(...sub.map(r=>r.signal));
+    return {cycle:c, aire, pic, n:sub.length};
+  }).filter(r=>r.n>=2); // garder seulement les cycles avec assez de points
+
+  if (!res.length) {
+    alert(`Aucun cycle avec ≥2 points à m/z ${targetMass} ± ${tol}. Augmentez la tolérance.`);
+    return;
+  }
+
+  // Détection automatique du cycle de début (premier saut brusque)
+  let cycleDebutIdx = 0;
+  for (let i = 1; i < res.length; i++) {
+    if (res[i-1].aire > 0 && res[i].aire / res[i-1].aire >= seuil) {
+      // Chercher le maximum après ce saut
+      let maxAire = -Infinity, maxIdx = i;
+      for (let j = i; j < res.length; j++) {
+        if (res[j].aire > maxAire) { maxAire = res[j].aire; maxIdx = j; }
+      }
+      cycleDebutIdx = maxIdx;
+      break;
+    }
+  }
+
+  // Partie décroissante : du max jusqu'à la fin
+  const dec = res.slice(cycleDebutIdx).map((r, i) => ({...r, t: i}));
+  const nBruit = cycleDebutIdx;
+
+  // Fit expo
+  const fitAire = fitExpo(dec.map(r=>r.t), dec.map(r=>r.aire));
+  const fitPic  = fitExpo(dec.map(r=>r.t), dec.map(r=>r.pic));
+
+  resData = {res, dec, nBruit, cycleDebutIdx, targetMass, tol, fitAire, fitPic};
+
+  displayResults();
+  drawCharts(rows, cycles, res, dec, nBruit);
+}
+
+// ── Affichage résultats ───────────────────────────────────────────────
+function displayResults() {
+  const {nBruit, dec, fitAire, fitPic, res, cycleDebutIdx} = resData;
+  const fmt = (v,d=4) => v!=null&&isFinite(v) ? v.toFixed(d) : '—';
+  const fmtE = v => v!=null&&isFinite(v) ? v.toExponential(3) : '—';
+
+  document.getElementById('results').innerHTML = `
+    <div>Cycles bruit ignorés : <b>${nBruit}</b></div>
+    <div>Cycle max (début déc.) : <b>${res[cycleDebutIdx]?.cycle}</b></div>
+    <div>Cycles décroissance : <b>${dec.length}</b></div>
+    ${fitAire ? `
+    <div class="fit-box">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--violet);margin-bottom:3px">Aire (trapèzes)</div>
+      λ = <b>${fmt(fitAire.lam,6)}</b> /cycle<br>
+      τ = <b>${fmt(fitAire.tau,3)}</b> cycles<br>
+      t½ = <b>${fmt(fitAire.thalf,3)}</b> cycles<br>
+      A = <b>${fmtE(fitAire.A)}</b><br>
+      offset = <b>${fmtE(fitAire.offset)}</b><br>
+      R² = <b>${fmt(fitAire.r2,5)}</b>
+    </div>` : '<div style="color:#c0392b;font-size:11px;margin-top:6px">Fit aire échoué</div>'}
+    ${fitPic ? `
+    <div class="fit-box" style="margin-top:6px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--rose);margin-bottom:3px">Pic maximum</div>
+      λ = <b>${fmt(fitPic.lam,6)}</b> /cycle<br>
+      τ = <b>${fmt(fitPic.tau,3)}</b> cycles<br>
+      t½ = <b>${fmt(fitPic.thalf,3)}</b> cycles<br>
+      A = <b>${fmtE(fitPic.A)}</b><br>
+      offset = <b>${fmtE(fitPic.offset)}</b><br>
+      R² = <b>${fmt(fitPic.r2,5)}</b>
+    </div>` : '<div style="color:#c0392b;font-size:11px;margin-top:6px">Fit pic échoué</div>'}
+  `;
+}
+
+// ── Graphes ────────────────────────────────────────────────────────────
+function makeChart(id, cfg) {
+  if (charts[id]) { charts[id].destroy(); }
+  charts[id] = new Chart(document.getElementById(id).getContext('2d'), cfg);
+}
+
+function plasma(t) {
+  const r = Math.round(13 + t*(220 + t*(-300 + t*200)));
+  const g = Math.round(8  + t*(100 + t*(-80 + t*0)));
+  const b = Math.round(135+ t*(-200 + t*(100)));
+  return `rgb(${Math.max(0,Math.min(255,r))},${Math.max(0,Math.min(255,g))},${Math.max(0,Math.min(255,b))})`;
+}
+
+const OPTS_BASE = {
+  responsive:true, maintainAspectRatio:false, animation:false,
+  plugins:{ legend:{display:true,labels:{font:{size:9},boxWidth:10}} },
+  scales:{
+    x:{ ticks:{color:'#475569',font:{size:9},maxTicksLimit:12}, grid:{color:'rgba(0,0,0,.05)'},
+        title:{display:true,color:'#475569',font:{size:9}} },
+    y:{ ticks:{color:'#475569',font:{size:9}}, grid:{color:'rgba(0,0,0,.05)'},
+        title:{display:true,color:'#475569',font:{size:9}} }
+  }
+};
+
+function deepMerge(base, extra) {
+  const out = {...base};
+  for (const k in extra) {
+    if (typeof extra[k]==='object'&&!Array.isArray(extra[k])&&extra[k]!==null && typeof base[k]==='object')
+      out[k] = deepMerge(base[k], extra[k]);
+    else out[k] = extra[k];
+  }
+  return out;
+}
+
+function drawCharts(rows, cycles, res, dec, nBruit) {
+  const cycleDebutIdx = resData.cycleDebutIdx;
+
+  // ── 1. Spectres ──────────────────────────────────────────────────
+  const specDatasets = cycles.map((c, i) => {
+    const sub = rows.filter(r=>r.cycle===c).sort((a,b)=>a.masse-b.masse);
+    const isBruit = i < cycleDebutIdx;
+    return {
+      label: `C${c}`,
+      data:  sub.map(r=>({x:r.masse, y:r.signal})),
+      borderColor: isBruit ? '#94a3b8' : plasma(Math.min(1,(i-cycleDebutIdx)/(cycles.length-cycleDebutIdx))),
+      borderWidth: isBruit ? 0.5 : 0.8,
+      pointRadius: 0, fill:false, tension:0,
+      borderDash: isBruit ? [2,2] : [],
+    };
+  });
+
+  makeChart('chart-spectra', {
+    type:'line', data:{datasets:specDatasets},
+    options: deepMerge(OPTS_BASE, {
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{type:'linear', title:{text:'Masse (m/z)',display:true}},
+        y:{title:{text:'Signal (A)',display:true}}
+      }
+    })
+  });
+
+  // ── 2. Décroissance aire ─────────────────────────────────────────
+  const tDense = Array.from({length:200}, (_,i)=>i/(200-1)*(dec.length-1));
+  const fitAireData = resData.fitAire
+    ? tDense.map(t=>({x:dec[Math.round(t)]?.cycle??t, y: resData.fitAire.A*Math.exp(-resData.fitAire.lam*t)+resData.fitAire.offset}))
+    : [];
+
+  const {thalf:th1,r2:r21} = resData.fitAire||{};
+
+  makeChart('chart-aire', {
+    type:'scatter',
+    data:{datasets:[
+      {label:'Données', data:dec.map(r=>({x:r.cycle,y:r.aire})),
+       backgroundColor:'#5b21b6', pointRadius:5, pointHoverRadius:7, showLine:false},
+      ...(resData.fitAire?[{type:'line',label:`Fit  t½=${th1?.toFixed(2)} cyc  R²=${r21?.toFixed(4)}`,
+        data:fitAireData, borderColor:'#b45309', borderWidth:2, borderDash:[5,3], pointRadius:0, fill:false}]:[])
+    ]},
+    options: deepMerge(OPTS_BASE, {
+      scales:{
+        x:{title:{text:'Cycle (depuis max)',display:true}},
+        y:{title:{text:'Aire (A·m/z)',display:true}}
+      }
+    })
+  });
+
+  // ── 3. Décroissance pic ──────────────────────────────────────────
+  const fitPicData = resData.fitPic
+    ? tDense.map(t=>({x:dec[Math.round(t)]?.cycle??t, y: resData.fitPic.A*Math.exp(-resData.fitPic.lam*t)+resData.fitPic.offset}))
+    : [];
+
+  const {thalf:th2,r2:r22} = resData.fitPic||{};
+
+  makeChart('chart-pic', {
+    type:'scatter',
+    data:{datasets:[
+      {label:'Données', data:dec.map(r=>({x:r.cycle,y:r.pic})),
+       backgroundColor:'#be185d', pointRadius:5, pointHoverRadius:7, showLine:false},
+      ...(resData.fitPic?[{type:'line',label:`Fit  t½=${th2?.toFixed(2)} cyc  R²=${r22?.toFixed(4)}`,
+        data:fitPicData, borderColor:'#b45309', borderWidth:2, borderDash:[5,3], pointRadius:0, fill:false}]:[])
+    ]},
+    options: deepMerge(OPTS_BASE, {
+      scales:{
+        x:{title:{text:'Cycle (depuis max)',display:true}},
+        y:{title:{text:'Signal max (A)',display:true}}
+      }
+    })
+  });
+}
+
+// ── Export ────────────────────────────────────────────────────────────
+function exportExcel() {
+  if (!resData) return;
+  const rows = resData.dec.map(r => ({
+    Cycle:        r.cycle,
+    t:            r.t,
+    Aire:         r.aire,
+    Pic:          r.pic,
+    'Taux_Aire%': (r.aire / resData.dec[0].aire * 100).toFixed(2),
+    'Taux_Pic%':  (r.pic  / resData.dec[0].pic  * 100).toFixed(2),
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Décroissance');
+  if (resData.fitAire || resData.fitPic) {
+    const params = [];
+    if (resData.fitAire) params.push({Méthode:'Aire', ...resData.fitAire, yhat:undefined});
+    if (resData.fitPic)  params.push({Méthode:'Pic',  ...resData.fitPic,  yhat:undefined});
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(params), 'Paramètres_fit');
+  }
+  XLSX.writeFile(wb, `decroissance_m${resData.targetMass}.xlsx`);
+}
+</script>
+</body>
+</html>

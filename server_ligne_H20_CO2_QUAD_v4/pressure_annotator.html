@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Pressure Annotator</title>
+<script src="/static/xlsx.full.min.js"></script>
+<script src="/static/chart.umd.js"></script>
+<script src="/static/hammer.min.js"></script>
+<script src="/static/chartjs-plugin-zoom.min.js"></script>
+<script src="/static/jspdf.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{--bg:#f8f9fa;--panel:#fff;--card:#f1f5f9;--border:#cbd5e1;--text:#1e293b;--sub:#475569;--font:'Segoe UI',sans-serif;}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+.topbar{display:flex;align-items:center;gap:8px;padding:7px 14px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;}
+.topbar-title{font-size:14px;font-weight:700;margin-right:6px;}
+.tbtn{padding:5px 12px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:11px;border-radius:4px;cursor:pointer;font-family:var(--font);}
+.tbtn:hover{background:#e2e8f0;}
+.tbtn.active{background:#fde8e8;color:#c0392b;border-color:#fca5a5;}
+.status{font-size:11px;color:var(--sub);}
+.palette{display:flex;gap:5px;padding:5px 14px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;align-items:center;}
+.palette-lbl{font-size:11px;color:var(--sub);margin-right:4px;flex-shrink:0;}
+.chip{padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;color:#fff;cursor:pointer;border:2px solid transparent;user-select:none;}
+.chip.selected{outline:3px solid #1e293b;outline-offset:2px;}
+.palette-add{padding:3px 10px;border:1px dashed var(--border);border-radius:12px;font-size:11px;color:var(--sub);cursor:pointer;background:none;}
+.cropbar{display:flex;align-items:center;gap:8px;padding:5px 14px;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0;font-size:11px;color:var(--sub);}
+.cropbar input[type=range]{flex:1;accent-color:#1d9e75;max-width:160px;}
+.crop-lbl{min-width:56px;color:var(--text);font-variant-numeric:tabular-nums;}
+.chart-wrap{flex:1;position:relative;padding:8px;min-height:0;overflow:hidden;}
+.chart-wrap canvas{position:absolute;inset:8px;width:calc(100% - 16px)!important;height:calc(100% - 16px)!important;}
+#hint{font-size:10px;color:var(--sub);position:absolute;bottom:10px;left:50%;transform:translateX(-50%);pointer-events:none;white-space:nowrap;}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-title">📌 Pressure Annotator</div>
+  <label class="tbtn" style="cursor:pointer">📂 Ouvrir .xlsx
+    <input type="file" accept=".xlsx,.xls" id="file-input" style="display:none">
+  </label>
+  <button class="tbtn" id="rm-btn" onclick="toggleRm()">⊗ Points aberrants</button>
+  <button class="tbtn" id="diff-btn" onclick="toggleDiffMode()">📏 ΔPression</button>
+  <button class="tbtn" onclick="detectEvents()">🔍 Détecter évènements</button>
+  <button class="tbtn" onclick="if(chart)chart.resetZoom()">🔍 Reset zoom</button>
+  <button class="tbtn" onclick="exportPng()">↓ PNG</button>
+  <div class="tbtn" style="display:flex;align-items:center;gap:5px;cursor:default;background:#eef2ff;border-color:#c7d2fe">
+    <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
+      🖼️ Image analyseur signal (optionnel)
+      <input type="file" accept="image/*" id="quad-img-input" style="display:none">
+    </label>
+    <span id="quad-img-status" style="color:#475569;font-weight:400">aucune — exporte-la depuis l'Analyseur Signal (bouton "PNG onglet actif")</span>
+  </div>
+  <button class="tbtn" id="report-btn" onclick="generateReport()" style="background:#fde68a;border-color:#f59e0b;font-weight:700">📄 Générer rapport</button>
+  <span class="status" id="status">Aucun fichier — sélectionnez une étiquette puis cliquez sur le graphe</span>
+</div>
+
+<div class="palette" id="palette">
+  <span class="palette-lbl">Étiquettes :</span>
+</div>
+
+<div class="cropbar">
+  <span>Début</span>
+  <input type="range" id="crop-start" min="0" max="1000" value="0" oninput="onCrop()">
+  <span class="crop-lbl" id="lbl-start">—</span>
+  <span>Fin</span>
+  <input type="range" id="crop-end" min="0" max="1000" value="1000" oninput="onCrop()">
+  <span class="crop-lbl" id="lbl-end">—</span>
+  <button class="tbtn" onclick="resetCrop()">↺ Reset</button>
+</div>
+
+<div class="cropbar" id="diffbar" style="display:none;background:#fff3e8;">
+  <span style="font-size:13px">📏</span>
+  <span class="status" id="diff-txt">Cliquez 2 points sur le graphe pour mesurer l'écart</span>
+  <button class="tbtn" onclick="resetDiff()">↺ Effacer la mesure</button>
+</div>
+
+<div class="chart-wrap" id="chart-wrap">
+  <canvas id="main-chart"></canvas>
+  <div id="hint">Scroll = zoom X · Ctrl+Scroll = zoom Y · Clic milieu+glisser = pan · Clic droit sur label = supprimer · Glisser le label = déplacer</div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+const LABEL_DEFS=[
+  {label:'laser on',color:'#3266ad'},{label:'expansion effect',color:'#1d9e75'},
+  {label:'aliquote',color:'#d85a30'},{label:'N₂ liq',color:'#d4537e'},
+  {label:'carboglace + ethanol',color:'#ba7517'},{label:'pumping',color:'#639922'},
+  {label:'remove carboglace + ethanol',color:'#534ab7'},{label:'remove N₂',color:'#888780'},
+];
+
+let data=[],removed=new Set(),annotations=[],loadedFileName='';
+// annotation: {t:Date, label:str, color:str, labelYfrac:float (0-1, fraction de chartArea height)}
+let cropStart=0,cropEnd=1,chart=null,rmMode=false,selectedLabel=null,labelDefs=[...LABEL_DEFS];
+
+// ── Mode mesure ΔPression ────────────────────────────────────────────
+let diffMode=false, diffPts=[]; // jusqu'à 2 points : {t:Date, p2:number, i:int}
+
+// ── Suggestions d'évènements détectés automatiquement ────────────────
+// {t:Date, p2:number, i:int, kind:'rupture'|'palier', _px:{x,y}}
+let suggestions=[];
+
+// ── Drag état ──────────────────────────────────────────────────────
+let dragAnn=null;       // index dans annotations
+let dragMode=null;      // 'line' | 'label'
+let dragStartX=0,dragStartT=0,dragStartY=0,dragStartYfrac=0;
+let isPanning=false;
+
+// ── Plugin annotation canvas ───────────────────────────────────────
+const annPlugin={
+  id:'annPlugin',
+  afterDraw(chart){
+    if(!annotations.length) return;
+    const{ctx,chartArea:{left,right,top,bottom}}=chart;
+    const xScale=chart.scales.x, yScale=chart.scales.y;
+    const visMin=xScale.min, visMax=xScale.max, span=visMax-visMin||1;
+    const H=bottom-top;
+
+    ctx.save();
+    // clip strict à la zone graphe
+    ctx.beginPath(); ctx.rect(left,top,right-left,bottom-top); ctx.clip();
+    ctx.font='bold 10px Segoe UI,sans-serif';
+
+    annotations.forEach((ann,i)=>{
+      const ts=ann.t.getTime();
+      if(ts<visMin||ts>visMax) return;
+      const px=left+(ts-visMin)/span*(right-left);
+      const yfrac=ann.labelYfrac??0.15;
+      const ly=top+yfrac*H;
+
+      // Ligne
+      ctx.strokeStyle=ann.color; ctx.lineWidth=1.8; ctx.setLineDash([]);
+      ctx.globalAlpha=0.8;
+      ctx.beginPath(); ctx.moveTo(px,top); ctx.lineTo(px,bottom); ctx.stroke();
+      ctx.globalAlpha=1;
+
+      // Label box
+      const tw=ctx.measureText(ann.label).width;
+      const lw=tw+10, lh=18;
+      const lx=Math.min(Math.max(px-lw/2, left), right-lw);
+      const lyTop=Math.min(Math.max(ly-lh/2,top),bottom-lh);
+
+      // Stocker la bounding box pour le drag
+      ann._bbox={x:lx,y:lyTop,w:lw,h:lh,lineX:px};
+
+      // Fond arrondi
+      ctx.fillStyle=ann.color;
+      ctx.beginPath();
+      ctx.roundRect(lx,lyTop,lw,lh,4);
+      ctx.fill();
+
+      // Connecteur label → ligne
+      ctx.strokeStyle=ann.color; ctx.lineWidth=0.8; ctx.globalAlpha=0.5;
+      ctx.setLineDash([3,2]);
+      ctx.beginPath(); ctx.moveTo(px,lyTop+lh/2); ctx.lineTo(px,top); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+
+      // Texte
+      ctx.fillStyle='#fff'; ctx.textBaseline='middle';
+      ctx.fillText(ann.label,lx+5,lyTop+lh/2);
+    });
+    ctx.restore();
+  }
+};
+Chart.register(annPlugin);
+
+// ── Plugin mesure ΔPression (points A/B + ligne + étiquette) ────────
+const diffPlugin={
+  id:'diffPlugin',
+  afterDraw(chart){
+    if(!diffPts.length) return;
+    const{ctx,chartArea:{left,right,top,bottom}}=chart;
+    const xScale=chart.scales.x, yScale=chart.scales.y;
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(left,top,right-left,bottom-top); ctx.clip();
+
+    const pos=diffPts.map(d=>({
+      x:xScale.getPixelForValue(d.t.getTime()),
+      y:yScale.getPixelForValue(d.p2),
+      d
+    }));
+
+    // Ligne pointillée entre A et B
+    if(pos.length===2){
+      ctx.strokeStyle='#d85a30'; ctx.lineWidth=1.4; ctx.setLineDash([6,4]); ctx.globalAlpha=0.8;
+      ctx.beginPath(); ctx.moveTo(pos[0].x,pos[0].y); ctx.lineTo(pos[1].x,pos[1].y); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+    }
+
+    // Points A / B
+    pos.forEach((p,idx)=>{
+      ctx.fillStyle='#d85a30';
+      ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#fff'; ctx.lineWidth=1.6; ctx.stroke();
+      ctx.fillStyle='#1e293b'; ctx.font='bold 11px Segoe UI,sans-serif'; ctx.textBaseline='alphabetic';
+      ctx.fillText(idx===0?'A':'B', p.x+8, p.y-8);
+    });
+
+    // Étiquette ΔP au milieu du segment
+    if(pos.length===2){
+      const dP=pos[1].d.p2-pos[0].d.p2;
+      const txt=`ΔP = ${dP>=0?'+':''}${dP.toFixed(8)} mbar`;
+      const mx=(pos[0].x+pos[1].x)/2, my=(pos[0].y+pos[1].y)/2;
+      ctx.font='bold 11px Segoe UI,sans-serif';
+      const tw=ctx.measureText(txt).width;
+      let bx=mx-tw/2-5, by=my-26;
+      bx=Math.min(Math.max(bx,left),right-tw-10);
+      by=Math.max(by,top+2);
+      ctx.fillStyle='rgba(255,255,255,.95)';
+      ctx.beginPath(); ctx.roundRect(bx,by,tw+10,18,4); ctx.fill();
+      ctx.strokeStyle='#d85a30'; ctx.lineWidth=1; ctx.stroke();
+      ctx.fillStyle='#d85a30'; ctx.textBaseline='middle';
+      ctx.fillText(txt,bx+5,by+9);
+    }
+    ctx.restore();
+  }
+};
+Chart.register(diffPlugin);
+
+// ── Plugin suggestions d'évènements (losanges cliquables) ────────────
+const SUGG_COLORS = { rupture:'#7c3aed', palier:'#0d9488' };
+const SUGG_ICONS  = { rupture:'⚡', palier:'▬' };
+const suggPlugin={
+  id:'suggPlugin',
+  afterDraw(chart){
+    if(!suggestions.length) return;
+    const{ctx,chartArea:{left,right,top,bottom}}=chart;
+    const xScale=chart.scales.x, yScale=chart.scales.y;
+    const visMin=xScale.min, visMax=xScale.max;
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(left,top,right-left,bottom-top); ctx.clip();
+
+    suggestions.forEach(s=>{
+      const ts=s.t.getTime();
+      if(ts<visMin||ts>visMax){ s._px=null; return; }
+      const x=xScale.getPixelForValue(ts);
+      const y=yScale.getPixelForValue(s.p2);
+      s._px={x,y};
+      const col=SUGG_COLORS[s.kind]||'#7c3aed';
+
+      // Losange
+      ctx.fillStyle=col; ctx.strokeStyle='#fff'; ctx.lineWidth=1.4;
+      ctx.beginPath();
+      ctx.moveTo(x,y-8); ctx.lineTo(x+8,y); ctx.lineTo(x,y+8); ctx.lineTo(x-8,y);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+
+      // Icône
+      ctx.fillStyle='#fff'; ctx.font='bold 9px Segoe UI,sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(SUGG_ICONS[s.kind]||'?', x, y);
+      ctx.textAlign='left';
+    });
+    ctx.restore();
+  }
+};
+Chart.register(suggPlugin);
+
+// ── Palette ────────────────────────────────────────────────────────
+function buildPalette(){
+  const pal=document.getElementById('palette');
+  while(pal.children.length>1) pal.removeChild(pal.lastChild);
+  labelDefs.forEach(def=>{
+    const chip=document.createElement('span');
+    chip.className='chip'; chip.textContent=def.label; chip.style.background=def.color;
+    chip.onclick=()=>{
+      if(selectedLabel?.label===def.label){
+        selectedLabel=null;
+        document.querySelectorAll('.chip').forEach(c=>c.classList.remove('selected'));
+      } else {
+        selectedLabel=def;
+        document.querySelectorAll('.chip').forEach(c=>c.classList.remove('selected'));
+        chip.classList.add('selected');
+        if(diffMode) toggleDiffMode();
+      }
+    };
+    pal.appendChild(chip);
+  });
+  const add=document.createElement('span');
+  add.className='palette-add'; add.textContent='+ Nouvelle';
+  add.onclick=()=>{
+    const n=prompt('Nom :'); if(!n) return;
+    const c=prompt('Couleur hex :','#e07b39')||'#888888';
+    labelDefs.push({label:n.trim(),color:c.trim()}); buildPalette();
+  };
+  pal.appendChild(add);
+}
+buildPalette();
+
+// ── Fichier ────────────────────────────────────────────────────────
+document.getElementById('file-input').addEventListener('change',e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const wb=XLSX.read(ev.target.result,{type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const raw=XLSX.utils.sheet_to_json(ws,{defval:''});
+    if(!raw.length) return;
+    const cols=Object.keys(raw[0]).map(c=>c.trim());
+    const low=cols.map(c=>c.toLowerCase());
+    const tIdx=low.findIndex(c=>c.includes('temps')||c.includes('time'));
+    const pIdx=low.findIndex(c=>c.includes('pression2')||c.includes('pressure2'));
+    if(tIdx<0||pIdx<0){alert('Colonnes Temps/Pression2 introuvables');return;}
+    data=raw.map(r=>({t:new Date(r[cols[tIdx]]),p2:parseFloat(r[cols[pIdx]])||0}))
+            .filter(r=>!isNaN(r.t.getTime())).sort((a,b)=>a.t-b.t);
+    removed=new Set(); annotations=[]; diffPts=[]; suggestions=[]; updateDiffUI();
+    loadedFileName=file.name.replace(/\.[^.]+$/,'');
+    cropStart=0;cropEnd=1;
+    document.getElementById('crop-start').value=0;
+    document.getElementById('crop-end').value=1000;
+    updateCropLabels();
+    document.getElementById('status').textContent=
+      `${file.name} · ${data.length} pts · ${data[0].t.toLocaleTimeString('fr-FR',{hour12:false})} → ${data[data.length-1].t.toLocaleTimeString('fr-FR',{hour12:false})}`;
+    redraw();
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+// ── Image de l'analyseur signal (optionnelle, pour le rapport) ───────
+let quadImg=null; // {fileName, dataUrl, width, height}
+document.getElementById('quad-img-input').addEventListener('change',e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const img=new Image();
+    img.onload=()=>{
+      quadImg={fileName:file.name, dataUrl:ev.target.result, width:img.width, height:img.height};
+      document.getElementById('quad-img-status').textContent=`✓ ${file.name}`;
+    };
+    img.onerror=()=>{
+      quadImg=null;
+      document.getElementById('quad-img-status').textContent='⚠ image illisible';
+    };
+    img.src=ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+// ── Crop ───────────────────────────────────────────────────────────
+function onCrop(){
+  const s=parseInt(document.getElementById('crop-start').value);
+  const e=parseInt(document.getElementById('crop-end').value);
+  if(s>=e-10) return;
+  cropStart=s/1000; cropEnd=e/1000; updateCropLabels(); if(data.length) redraw();
+}
+function updateCropLabels(){
+  document.getElementById('lbl-start').textContent=fracToTime(cropStart);
+  document.getElementById('lbl-end').textContent=fracToTime(cropEnd);
+}
+function fracToTime(frac){
+  if(!data.length) return '—';
+  const t0=data[0].t.getTime(),t1=data[data.length-1].t.getTime();
+  return new Date(t0+(t1-t0)*frac).toLocaleTimeString('fr-FR',{hour12:false});
+}
+function resetCrop(){
+  document.getElementById('crop-start').value=0;
+  document.getElementById('crop-end').value=1000;
+  cropStart=0;cropEnd=1;updateCropLabels();if(data.length) redraw();
+}
+
+// ── Mode mesure ΔPression ────────────────────────────────────────────
+function toggleDiffMode(){
+  diffMode=!diffMode;
+  const btn=document.getElementById('diff-btn');
+  btn.classList.toggle('active',diffMode);
+  btn.textContent=diffMode?'📏 Quitter mode ΔP':'📏 ΔPression';
+  document.getElementById('diffbar').style.display=diffMode?'flex':'none';
+  if(diffMode){
+    // Désactiver les autres modes pour éviter les conflits de clic
+    if(rmMode){
+      rmMode=false;
+      const rb=document.getElementById('rm-btn');
+      rb.classList.remove('active'); rb.textContent='⊗ Points aberrants';
+    }
+    selectedLabel=null;
+    document.querySelectorAll('.chip').forEach(c=>c.classList.remove('selected'));
+  } else {
+    diffPts=[];
+  }
+  updateDiffUI();
+  if(chart) redraw();
+}
+
+function resetDiff(){
+  diffPts=[];
+  updateDiffUI();
+  if(chart) redraw();
+}
+
+function updateDiffUI(){
+  const el=document.getElementById('diff-txt');
+  if(!el) return;
+  if(diffPts.length<2){
+    el.textContent = diffPts.length===0
+      ? 'Cliquez 2 points sur le graphe pour mesurer l\'écart'
+      : `Point A : ${diffPts[0].t.toLocaleTimeString('fr-FR',{hour12:false})} → ${diffPts[0].p2.toFixed(8)} mbar — cliquez le 2ᵉ point`;
+    return;
+  }
+  // Ordonner chronologiquement
+  const [a,b]=diffPts[0].t<=diffPts[1].t?[diffPts[0],diffPts[1]]:[diffPts[1],diffPts[0]];
+  const dP=b.p2-a.p2;
+  const dtS=(b.t.getTime()-a.t.getTime())/1000;
+  const fmtT=d=>d.toLocaleTimeString('fr-FR',{hour12:false});
+  const rate=dtS!==0 ? dP/dtS : 0;
+  el.innerHTML =
+    `<b>A</b> ${fmtT(a.t)} = ${a.p2.toFixed(8)} mbar &nbsp;·&nbsp; `+
+    `<b>B</b> ${fmtT(b.t)} = ${b.p2.toFixed(8)} mbar &nbsp;·&nbsp; `+
+    `<b style="color:#d85a30">ΔP = ${dP>=0?'+':''}${dP.toFixed(8)} mbar</b> &nbsp;·&nbsp; `+
+    `Δt = ${dtS.toFixed(1)} s &nbsp;·&nbsp; taux = ${rate.toExponential(3)} mbar/s`;
+}
+
+// ── Détection automatique d'évènements ───────────────────────────────
+// Repère 2 types de signatures sur la courbe : ruptures de pente (clic/manip)
+// et paliers stables prolongés (état stationnaire). Affiche des suggestions
+// cliquables : clic gauche = valider (devient une vraie annotation), clic
+// droit = ignorer. N'écrase jamais les annotations déjà posées.
+function detectEvents(){
+  if(!data.length){ alert('Charge d\'abord un fichier .xlsx.'); return; }
+  const visible=getVisible().filter(d=>!removed.has(d.i));
+  const n=visible.length;
+  if(n<50){ alert('Pas assez de points visibles pour détecter des évènements (zoome moins / élargis le crop).'); return; }
+
+  const t=visible.map(d=>d.t.getTime());
+  const p=visible.map(d=>d.p2);
+  const totalSpanS=(t[n-1]-t[0])/1000 || 1;
+  const avgDtS=totalSpanS/(n-1) || 1;
+  const W=Math.max(5,Math.round(4/avgDtS)); // fenêtre ~4s de part et d'autre
+
+  if(n<W*3){ alert('Plage trop courte pour ce niveau de détail — élargis le crop.'); return; }
+
+  // Pente locale lissée (mbar/s) pour la détection des paliers
+  const slope=new Array(n).fill(0);
+  for(let i=W;i<n-W;i++) slope[i]=(p[i+W]-p[i-W])/(((t[i+W]-t[i-W])/1000)||1e-6);
+
+  const pRange=Math.max(...p)-Math.min(...p)||1e-12;
+  const slopesMid=slope.slice(W,n-W).map(Math.abs).sort((a,b)=>a-b);
+  const pct=q=>slopesMid[Math.min(slopesMid.length-1,Math.floor(slopesMid.length*q))]||0;
+  const slopeMed=pct(0.5), slopeP90=pct(0.9);
+
+  // 1) Ruptures de pente : grand écart entre la pente avant et la pente après
+  const ruptureThresh=Math.max(slopeP90*1.5, pRange*0.02);
+  const minSepS=8;
+  const candidates=[];
+  for(let i=W;i<n-W;i++){
+    const before=(p[i]-p[i-W])/(((t[i]-t[i-W])/1000)||1e-6);
+    const after =(p[i+W]-p[i])/(((t[i+W]-t[i])/1000)||1e-6);
+    const delta=Math.abs(after-before);
+    if(delta>ruptureThresh) candidates.push({i,score:delta});
+  }
+  candidates.sort((a,b)=>b.score-a.score);
+  const keptRupture=[];
+  for(const c of candidates){
+    if(keptRupture.some(k=>Math.abs(t[k.i]-t[c.i])<minSepS*1000)) continue;
+    keptRupture.push(c);
+  }
+
+  // 2) Paliers stables : pente quasi nulle pendant longtemps
+  const flatThresh=Math.max(slopeMed*1.2, pRange*0.002);
+  const minPlateauPts=Math.max(5,Math.round(15/avgDtS));
+  const plateaus=[];
+  let runStart=null;
+  for(let i=W;i<n-W;i++){
+    const flat=Math.abs(slope[i])<flatThresh;
+    if(flat&&runStart===null) runStart=i;
+    if(!flat&&runStart!==null){
+      if(i-runStart>=minPlateauPts) plateaus.push({iStart:runStart,iEnd:i-1});
+      runStart=null;
+    }
+  }
+  if(runStart!==null&&(n-W-1-runStart)>=minPlateauPts) plateaus.push({iStart:runStart,iEnd:n-W-1});
+
+  const fresh=[];
+  keptRupture.forEach(c=>fresh.push({t:new Date(t[c.i]),p2:p[c.i],i:visible[c.i].i,kind:'rupture'}));
+  plateaus.forEach(pl=>{
+    const mid=Math.floor((pl.iStart+pl.iEnd)/2);
+    const tMid=t[mid];
+    const tooClose=fresh.some(s=>Math.abs(s.t.getTime()-tMid)<minSepS*1000);
+    if(!tooClose) fresh.push({t:new Date(tMid),p2:p[mid],i:visible[mid].i,kind:'palier'});
+  });
+  fresh.sort((a,b)=>a.t-b.t);
+
+  // Fusion avec l'existant : pas de doublon avec une suggestion ou une annotation déjà là
+  let added=0;
+  fresh.forEach(s=>{
+    const dupSugg=suggestions.some(x=>Math.abs(x.t.getTime()-s.t.getTime())<minSepS*1000&&x.kind===s.kind);
+    const dupAnn =annotations.some(a=>Math.abs(a.t.getTime()-s.t.getTime())<minSepS*1000);
+    if(!dupSugg&&!dupAnn){ suggestions.push(s); added++; }
+  });
+
+  redraw();
+  const st=document.getElementById('status');
+  if(st) st.textContent=`🔍 ${added} évènement(s) suggéré(s) (${suggestions.length} en attente) — clic gauche = valider, clic droit = ignorer`;
+}
+
+function acceptSuggestion(idx){
+  const s=suggestions[idx];
+  if(!s) return;
+  const def=selectedLabel || (s.kind==='rupture'
+    ? {label:'Rupture de pente',color:SUGG_COLORS.rupture}
+    : {label:'Palier stable',color:SUGG_COLORS.palier});
+  annotations.push({ t:s.t, label:def.label, color:def.color, labelYfrac:0.15 });
+  suggestions.splice(idx,1);
+  chart.update('none');
+}
+
+function rejectSuggestion(idx){
+  suggestions.splice(idx,1);
+  chart.update('none');
+}
+
+// ── getVisible ─────────────────────────────────────────────────────
+function getVisible(){
+  if(!data.length) return [];
+  const t0=data[0].t.getTime(),t1=data[data.length-1].t.getTime();
+  const vs=t0+(t1-t0)*cropStart,ve=t0+(t1-t0)*cropEnd;
+  return data.map((d,i)=>({...d,i})).filter(d=>d.t.getTime()>=vs&&d.t.getTime()<=ve);
+}
+
+// ── Rendu ──────────────────────────────────────────────────────────
+function redraw(){
+  const visible=getVisible();
+  const clean=visible.filter(d=>!removed.has(d.i));
+
+  if(chart){chart.destroy();chart=null;}
+  const ctx=document.getElementById('main-chart').getContext('2d');
+  chart=new Chart(ctx,{
+    type:'line',
+    data:{
+      datasets:[
+        {label:'P2',data:clean.map(d=>({x:d.t.getTime(),y:d.p2})),
+         borderColor:'#1d9e75',borderWidth:1.4,pointRadius:0,fill:false,tension:0},
+        // Points supprimés
+        ...(visible.filter(d=>removed.has(d.i)).length?[{
+          type:'scatter',label:'Supprimés',
+          data:visible.filter(d=>removed.has(d.i)).map(d=>({x:d.t.getTime(),y:d.p2})),
+          backgroundColor:'#c0392b',pointRadius:5,showLine:false
+        }]:[])
+      ]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{
+        legend:{display:false},
+        zoom:{zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x'},pan:{enabled:true,mode:'x'}},
+        annPlugin:{},
+        diffPlugin:{},
+        suggPlugin:{},
+      },
+      scales:{
+        x:{type:'linear',
+           ticks:{color:'#475569',maxTicksLimit:8,font:{size:10},
+             callback:v=>new Date(v).toLocaleTimeString('fr-FR',{hour12:false})},
+           grid:{color:'rgba(0,0,0,.06)'},
+           title:{display:true,text:'Temps',color:'#475569',font:{size:11}}},
+        y:{ticks:{color:'#475569',font:{size:10}},grid:{color:'rgba(0,0,0,.06)'},
+           title:{display:true,text:'Pression 2 (mbar)',color:'#475569',font:{size:11}}}
+      }
+    }
+  });
+  attachCanvasEvents();
+}
+
+// ── Gestion souris sur le canvas ───────────────────────────────────
+function attachCanvasEvents(){
+  const cvs=document.getElementById('main-chart');
+  // mousedown
+  cvs.onmousedown=e=>{
+    if(!chart) return;
+    const{x,y}=canvasXY(e,cvs);
+    const{chartArea:{left,right,top,bottom}}=chart;
+    if(x<left||x>right||y<top||y>bottom) return;
+    const xScale=chart.scales.x,yScale=chart.scales.y;
+
+    // Clic milieu → pan (géré par plugin zoom)
+    if(e.button===1) return;
+
+    // Clic gauche sur une suggestion d'évènement détecté → valider
+    if(e.button===0){
+      for(let i=suggestions.length-1;i>=0;i--){
+        const px=suggestions[i]._px;
+        if(!px) continue;
+        if(Math.abs(x-px.x)<9&&Math.abs(y-px.y)<9){ acceptSuggestion(i); return; }
+      }
+    }
+
+    // Vérifier si on clique sur un label
+    let hitAnn=-1,hitMode=null;
+    for(let i=annotations.length-1;i>=0;i--){
+      const b=annotations[i]._bbox;
+      if(!b) continue;
+      if(x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h){hitAnn=i;hitMode='label';break;}
+      // Clic sur la ligne verticale (±6px)
+      if(Math.abs(x-b.lineX)<6){hitAnn=i;hitMode='line';break;}
+    }
+
+    if(e.button===2) return; // clic droit géré par contextmenu
+
+    if(hitAnn>=0){
+      // Drag du label ou de la ligne
+      e.preventDefault();
+      dragAnn=hitAnn; dragMode=hitMode;
+      dragStartX=x; dragStartT=annotations[hitAnn].t.getTime();
+      dragStartY=y; dragStartYfrac=annotations[hitAnn].labelYfrac??0.15;
+      cvs.style.cursor='grabbing';
+      return;
+    }
+
+    // Mode mesure ΔPression
+    if(diffMode){
+      const ts=xScale.getValueForPixel(x);
+      const visible=getVisible().filter(d=>!removed.has(d.i));
+      let best=Infinity,bestD=null;
+      visible.forEach(d=>{const dt=Math.abs(d.t.getTime()-ts);if(dt<best){best=dt;bestD=d;}});
+      if(bestD&&best<(xScale.max-xScale.min)*0.02){
+        if(diffPts.length>=2) diffPts=[];
+        diffPts.push({t:bestD.t,p2:bestD.p2,i:bestD.i});
+        updateDiffUI();
+        chart.update('none');
+      }
+      return;
+    }
+
+    // Mode suppression point
+    if(rmMode){
+      const ts=xScale.getValueForPixel(x);
+      const visible=getVisible();
+      let best=Infinity,bestI=-1;
+      visible.forEach(d=>{const dt=Math.abs(d.t.getTime()-ts);if(dt<best){best=dt;bestI=d.i;}});
+      if(bestI>=0&&best<(xScale.max-xScale.min)*0.01){
+        if(removed.has(bestI))removed.delete(bestI);else removed.add(bestI);
+        redraw();
+      }
+      return;
+    }
+
+    // Placer annotation
+    if(selectedLabel){
+      const ts=xScale.getValueForPixel(x);
+      const yfrac=(y-top)/(bottom-top);
+      annotations.push({
+        t:new Date(ts),label:selectedLabel.label,color:selectedLabel.color,
+        labelYfrac:Math.min(Math.max(yfrac,0.05),0.9)
+      });
+      chart.update('none');
+    }
+  };
+
+  cvs.onmousemove=e=>{
+    if(!chart) return;
+    const{x,y}=canvasXY(e,cvs);
+    const{chartArea:{left,right,top,bottom}}=chart;
+
+    if(dragAnn>=0){
+      e.preventDefault();
+      const xScale=chart.scales.x;
+      const H=bottom-top;
+      if(dragMode==='line'||dragMode==='label'){
+        // Déplacer la ligne X
+        const dxPx=x-dragStartX;
+        const dxTs=dxPx/(right-left)*(xScale.max-xScale.min);
+        annotations[dragAnn].t=new Date(dragStartT+dxTs);
+      }
+      if(dragMode==='label'){
+        // Déplacer aussi Y du label
+        const dyFrac=(y-dragStartY)/H;
+        annotations[dragAnn].labelYfrac=Math.min(Math.max(dragStartYfrac+dyFrac,0.02),0.95);
+      }
+      chart.update('none');
+      return;
+    }
+
+    // Cursor
+    let onAnn=false, onSugg=false;
+    if(x>=left&&x<=right&&y>=top&&y<=bottom){
+      for(const ann of annotations){
+        const b=ann._bbox;
+        if(!b) continue;
+        if((x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h)||Math.abs(x-b.lineX)<6){onAnn=true;break;}
+      }
+      if(!onAnn){
+        for(const s of suggestions){
+          if(!s._px) continue;
+          if(Math.abs(x-s._px.x)<9&&Math.abs(y-s._px.y)<9){onSugg=true;break;}
+        }
+      }
+    }
+    cvs.style.cursor=onAnn||onSugg?'pointer':(selectedLabel||rmMode||diffMode?'crosshair':'default');
+    if(onAnn) cvs.style.cursor='grab';
+  };
+
+  cvs.onmouseup=e=>{
+    if(dragAnn>=0){dragAnn=-1;dragMode=null;document.getElementById('main-chart').style.cursor='default';}
+  };
+
+  cvs.oncontextmenu=e=>{
+    e.preventDefault();
+    if(!chart) return;
+    const{x,y}=canvasXY(e,cvs);
+    for(let i=suggestions.length-1;i>=0;i--){
+      const px=suggestions[i]._px;
+      if(!px) continue;
+      if(Math.abs(x-px.x)<9&&Math.abs(y-px.y)<9){ rejectSuggestion(i); return; }
+    }
+    for(let i=annotations.length-1;i>=0;i--){
+      const b=annotations[i]._bbox;
+      if(!b) continue;
+      if((x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h)||Math.abs(x-b.lineX)<6){
+        annotations.splice(i,1); chart.update('none'); return;
+      }
+    }
+  };
+}
+
+function canvasXY(e,cvs){
+  const r=cvs.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  // Chart.js utilise les coordonnées CSS (pas DPR)
+  return {x:e.clientX-r.left, y:e.clientY-r.top};
+}
+
+// ── Mode suppression ───────────────────────────────────────────────
+function toggleRm(){
+  rmMode=!rmMode;
+  const btn=document.getElementById('rm-btn');
+  btn.classList.toggle('active',rmMode);
+  btn.textContent=rmMode?'⊗ Quitter mode aberrants':'⊗ Points aberrants';
+  if(rmMode&&diffMode) toggleDiffMode();
+}
+
+// ── Export ─────────────────────────────────────────────────────────
+function exportPng(){
+  if(!chart) return;
+  const a=document.createElement('a');
+  a.download='pressure_annotated.png';
+  a.href=chart.toBase64Image('image/png',1); a.click();
+}
+
+// ── Rapport de session (PDF) ──────────────────────────────────────────
+
+async function generateReport(){
+  if(!data.length){ alert('Charge d\'abord un fichier .xlsx de jauge.'); return; }
+  if(typeof window.jspdf==='undefined'){ alert('jsPDF introuvable — vérifie que /static/jspdf.umd.min.js est bien présent sur le serveur.'); return; }
+
+  const btn=document.getElementById('report-btn');
+  btn.disabled=true; btn.textContent='⏳ Génération...';
+
+  try{
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit:'mm', format:'a4' });
+    const pageW=210, marginL=14, marginR=14, contentW=pageW-marginL-marginR;
+    let y=18;
+
+    const checkPage=(needed)=>{
+      if(y+needed>282){ doc.addPage(); y=18; }
+    };
+
+    // ── En-tête ──
+    const visible=getVisible().filter(d=>!removed.has(d.i));
+    const tStart=visible[0]?.t, tEnd=visible[visible.length-1]?.t;
+    doc.setFontSize(16); doc.setFont(undefined,'bold');
+    doc.text('Rapport de session — Jauge Inficon', marginL, y); y+=8;
+    doc.setFontSize(9); doc.setFont(undefined,'normal'); doc.setTextColor(100);
+    doc.text(`Généré le ${new Date().toLocaleString('fr-FR',{hour12:false})}`, marginL, y); y+=7;
+    doc.setTextColor(20);
+    doc.setFontSize(10);
+    const meta=[
+      ['Fichier', loadedFileName||'—'],
+      ['Plage horaire', tStart&&tEnd?`${tStart.toLocaleString('fr-FR',{hour12:false})} → ${tEnd.toLocaleString('fr-FR',{hour12:false})}`:'—'],
+      ['Durée', tStart&&tEnd?`${((tEnd-tStart)/60000).toFixed(1)} min`:'—'],
+      ['Points affichés', `${visible.length} (${removed.size} exclu(s))`],
+      ['Annotations', `${annotations.length}`],
+    ];
+    meta.forEach(([k,v])=>{
+      doc.setFont(undefined,'bold'); doc.text(k+' :', marginL, y);
+      doc.setFont(undefined,'normal'); doc.text(String(v), marginL+38, y);
+      y+=5.5;
+    });
+    y+=3;
+
+    // ── Graphe pression annotée ──
+    if(chart){
+      const img=chart.toBase64Image('image/png',1);
+      const ratio=chart.canvas.height/chart.canvas.width;
+      const w=contentW, h=w*ratio;
+      checkPage(h+6);
+      doc.addImage(img,'PNG',marginL,y,w,h);
+      y+=h+8;
+    }
+
+    // ── Annotations ──
+    if(annotations.length){
+      checkPage(10);
+      doc.setFontSize(12); doc.setFont(undefined,'bold');
+      doc.text('Annotations', marginL, y); y+=6;
+      doc.setFontSize(9.5); doc.setFont(undefined,'normal');
+      [...annotations].sort((a,b)=>a.t-b.t).forEach(a=>{
+        checkPage(5.5);
+        doc.setFillColor(a.color||'#888'); doc.circle(marginL+1.2,y-1.2,1.2,'F');
+        doc.text(a.t.toLocaleTimeString('fr-FR',{hour12:false}), marginL+5, y);
+        doc.text(a.label, marginL+30, y);
+        y+=5;
+      });
+      y+=4;
+    }
+
+    // ── Timeline laser (journal serveur) ──
+    checkPage(10);
+    doc.setFontSize(12); doc.setFont(undefined,'bold');
+    doc.text('Timeline laser', marginL, y); y+=6;
+    doc.setFontSize(9.5); doc.setFont(undefined,'normal');
+    try{
+      const from=tStart?tStart.getTime():0, to=tEnd?tEnd.getTime():Date.now();
+      const r=await fetch(`/api/laser-log?from=${from}&to=${to}`);
+      const log=await r.json();
+      if(!log.length){
+        doc.setTextColor(140); doc.text('Aucun évènement laser sur cette plage.', marginL, y); doc.setTextColor(20); y+=6;
+      } else {
+        log.sort((a,b)=>a.t-b.t).forEach(ev=>{
+          checkPage(5.5);
+          const hhmm=new Date(ev.t).toLocaleTimeString('fr-FR',{hour12:false});
+          const desc=ev.type==='start'
+            ? `Laser ON — programme "${ev.programme}"${ev.customPower?` (${ev.customPower} mA)`:''}`
+            : `Laser OFF${ev.aborted?' (interrompu)':''}${ev.durationS!=null?` — durée ${ev.durationS.toFixed(0)}s`:''}`;
+          doc.text(hhmm, marginL+5, y);
+          doc.text(desc, marginL+25, y);
+          y+=5;
+        });
+        y+=4;
+      }
+    }catch(e){
+      doc.setTextColor(140);
+      doc.text('Journal laser indisponible (page ouverte hors du serveur, ou serveur inaccessible).', marginL, y);
+      doc.setTextColor(20); y+=6;
+    }
+
+    // ── Image de l'analyseur signal (optionnelle) ──
+    if(quadImg){
+      doc.addPage(); y=18;
+      doc.setFontSize(12); doc.setFont(undefined,'bold');
+      doc.text('Analyseur Signal (QUAD)', marginL, y); y+=6;
+      doc.setFontSize(9); doc.setFont(undefined,'normal'); doc.setTextColor(100);
+      doc.text(quadImg.fileName, marginL, y); doc.setTextColor(20); y+=6;
+      const ratio=quadImg.height/quadImg.width;
+      let w=contentW, h=w*ratio;
+      const maxH=282-y;
+      if(h>maxH){ h=maxH; w=h/ratio; }
+      const fmt = /^data:image\/(png|jpe?g)/i.exec(quadImg.dataUrl)?.[1]?.toUpperCase().replace('JPE?G','JPEG') || 'PNG';
+      doc.addImage(quadImg.dataUrl, fmt==='JPG'?'JPEG':fmt, marginL, y, w, h);
+      y+=h+6;
+    }
+
+    doc.save(`rapport_${(loadedFileName||'session').replace(/[^a-zA-Z0-9_-]/g,'_')}.pdf`);
+  } finally {
+    btn.disabled=false; btn.textContent='📄 Générer rapport';
+  }
+}
+
+// Init drag state
+let dragAnnVal=-1;
+Object.defineProperty(window,'dragAnn',{get:()=>dragAnnVal,set:v=>dragAnnVal=v});
+</script>
+</body>
+</html>

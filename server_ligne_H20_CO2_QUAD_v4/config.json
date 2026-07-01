@@ -1,0 +1,29 @@
+{
+  "saveDir": "C:\\Users\\moreira\\Desktop\\Dussart_Lyam\\test_server-v2\\server_v4\\DATA",
+  "quad": {
+    "enabled": true,
+    "host": "169.254.248.184",
+    "port": 10014,
+    "startMass": 3,
+    "endMass": 70,
+    "speed": "0",
+    "nScans": 50,
+    "egains": "0",
+    "FouM": "0"
+  },
+  "jauge": {
+    "enabled": true,
+    "port1": "COM3",
+    "port2": "COM4",
+    "baud": 9600,
+    "autoSaveEvery": 500
+  },
+  "laser": {
+    "port": "COM7",
+    "baud": 19200
+  },
+  "demo": {
+    "quadIntervalMs": 80,
+    "jaugeIntervalMs": 250
+  }
+}

@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lab Dashboard</title>
+<script src="/static/chart.umd.js"></script>
+<script src="/static/hammer.min.js"></script>
+<script src="/static/chartjs-plugin-zoom.min.js"></script>
+<style>
+:root {
+  --bg:     #f4f5f7;
+  --bg2:    #ffffff;
+  --bg3:    #eef0f3;
+  --border: #d0d5dd;
+  --accent: #c0390f;
+  --cyan:   #0284c7;
+  --amber:  #b45309;
+  --green:  #16a34a;
+  --red:    #dc2626;
+  --text:   #111827;
+  --muted:  #6b7280;
+  --font:   'Consolas','Courier New',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100vh;font-size:14px;}
+
+/* ── Header ── */
+header{
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+  padding:10px 24px;background:var(--bg2);
+  border-bottom:2px solid var(--border);position:sticky;top:0;z-index:100;
+  box-shadow:0 1px 4px rgba(0,0,0,.08);
+}
+.logo{display:flex;align-items:center;}
+.logo img{height:64px;width:auto;display:block;}
+
+.header-center{display:flex;align-items:center;gap:12px;}
+
+/* Boutons Start/Stop */
+.run-btn{
+  display:flex;align-items:center;gap:7px;
+  padding:7px 16px;border-radius:4px;border:1px solid var(--border);
+  font-family:var(--font);font-size:12px;font-weight:700;letter-spacing:1px;
+  cursor:pointer;transition:all .2s;text-transform:uppercase;
+  background:var(--bg3);color:var(--muted);
+}
+.run-btn .dot{width:7px;height:7px;border-radius:50%;background:var(--muted);transition:background .3s;}
+.run-btn.running{border-color:var(--green);color:var(--green);background:rgba(22,163,74,.08);}
+.run-btn.running .dot{background:var(--green);box-shadow:0 0 6px var(--green);animation:blink 1.5s infinite;}
+.run-btn.stopped{border-color:var(--border);color:var(--muted);}
+.run-btn:hover{border-color:var(--cyan);color:var(--cyan);}
+.run-btn.running:hover{border-color:var(--red);color:var(--red);}
+
+.header-right{display:flex;align-items:center;gap:14px;font-size:12px;color:var(--muted);}
+.hdot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:5px;transition:background .3s;}
+.hdot.live{background:var(--green);box-shadow:0 0 5px var(--green);animation:blink 2s infinite;}
+.hdot.err {background:var(--red);}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+.dpill{
+  font-size:11px;padding:2px 10px;border-radius:10px;
+  border:1px solid var(--border);color:var(--muted);transition:all .3s;
+}
+.dpill.hw  {border-color:var(--green);color:var(--green);background:rgba(22,163,74,.07);}
+.dpill.demo{border-color:var(--amber);color:var(--amber);background:rgba(180,83,9,.07);}
+.dpill.err {border-color:var(--red);  color:var(--red);background:rgba(220,38,38,.07);}
+
+/* ── Tabs ── */
+.tabs{display:flex;border-bottom:2px solid var(--border);background:var(--bg2);padding:0 24px;}
+.tab{
+  padding:12px 26px;font-size:14px;font-weight:700;letter-spacing:1px;
+  text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;
+  color:var(--muted);transition:all .2s;user-select:none;margin-bottom:-2px;
+}
+.tab:hover{color:var(--text);}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+.viewer-link-btn{
+  padding:5px 12px;font-size:10px;font-weight:600;letter-spacing:.5px;
+  text-transform:uppercase;cursor:pointer;border:1px solid var(--border);
+  border-radius:4px;background:var(--bg3);color:var(--muted);transition:all .15s;
+}
+.viewer-link-btn:hover{color:var(--text);border-color:var(--accent);}
+
+/* ── Pages ── */
+.page{display:none;padding:22px 24px;max-width:1400px;margin:0 auto;}
+.page.active{display:block;}
+
+/* ── Panel ── */
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:18px 20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.05);}
+.panel-title{
+  font-size:12px;letter-spacing:1px;text-transform:uppercase;
+  color:var(--cyan);margin-bottom:10px;font-weight:700;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
+}
+.panel-title span{color:var(--muted);}
+
+/* ── Contrôles chart ── */
+.chart-controls{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin-bottom:10px;padding:7px 10px;
+  background:var(--bg3);border-radius:4px;border:1px solid var(--border);
+}
+.ctrl-label{font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;}
+.ctrl-btn{
+  padding:4px 12px;border:1px solid var(--border);background:var(--bg2);
+  color:var(--muted);font-family:var(--font);font-size:12px;
+  cursor:pointer;border-radius:3px;transition:all .2s;
+}
+.ctrl-btn:hover,.ctrl-btn.active{border-color:var(--cyan);color:var(--cyan);background:rgba(2,132,199,.07);}
+.ctrl-sep{width:1px;height:16px;background:var(--border);margin:0 2px;}
+
+/* ── Slider ── */
+.time-slider-wrap{
+  display:flex;align-items:center;gap:8px;margin-bottom:10px;
+  padding:6px 10px;background:var(--bg3);border-radius:4px;border:1px solid var(--border);
+}
+.time-slider-wrap input[type=range]{flex:1;accent-color:var(--cyan);cursor:pointer;}
+.time-slider-wrap label{font-size:11px;color:var(--muted);white-space:nowrap;}
+.slider-val{font-size:12px;color:var(--cyan);min-width:70px;text-align:right;}
+
+canvas{width:100%!important;cursor:crosshair;}
+.chart-wrap{position:relative;height:300px;}
+.hint{font-size:11px;color:var(--muted);margin-top:5px;letter-spacing:0.5px;}
+
+/* ── Standby overlay ── */
+.standby{
+  height:260px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  border:1px dashed var(--border);border-radius:4px;background:var(--bg3);
+}
+.standby-icon{font-size:28px;opacity:.3;}
+.standby-txt{font-size:12px;color:var(--muted);letter-spacing:2px;}
+.standby-btn{
+  padding:7px 20px;border:1px solid var(--accent);color:var(--accent);
+  background:rgba(192,57,15,.07);border-radius:4px;
+  font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;
+  letter-spacing:1px;transition:all .2s;
+}
+.standby-btn:hover{background:rgba(192,57,15,.15);}
+
+/* ── QUAD info bar ── */
+.quad-info{
+  display:flex;gap:24px;flex-wrap:wrap;
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:6px;padding:14px 22px;margin-bottom:16px;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);
+}
+.qi{display:flex;flex-direction:column;gap:4px;}
+.qi-label{font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;}
+.qi-val  {font-size:22px;font-weight:700;color:var(--cyan);}
+
+/* ── Peaks ── */
+.peaks-bar{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:6px;padding:14px 20px;margin-bottom:16px;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);
+}
+.peaks-title{font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;font-weight:700;}
+.peaks-list{display:flex;gap:8px;flex-wrap:wrap;}
+.peak-item{
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:4px;
+  padding:8px 14px;min-width:74px;transition:border-color .2s;
+}
+.peak-rank{font-size:10px;color:var(--muted);letter-spacing:1px;}
+.peak-mass{font-size:20px;font-weight:700;color:var(--amber);}
+.peak-sig {font-size:11px;color:var(--muted);}
+
+/* ── Scan pills ── */
+.scan-list{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+.scan-pill{
+  padding:5px 14px;border-radius:20px;border:1px solid var(--border);
+  font-size:12px;cursor:pointer;background:var(--bg2);color:var(--muted);transition:all .2s;
+}
+.scan-pill:hover,.scan-pill.active{border-color:var(--cyan);color:var(--cyan);background:rgba(2,132,199,.07);}
+
+/* ── Contrôles param QUAD ── */
+.ctrl-group { display:flex;flex-direction:column;gap:5px; }
+.ctrl-group-label { font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase; }
+.ctrl-input {
+  background:var(--bg2);border:1px solid var(--border);color:var(--text);
+  padding:6px 10px;border-radius:3px;font-family:var(--font);font-size:14px;
+  width:90px;transition:border-color .2s;
+}
+.ctrl-input:focus { outline:none;border-color:var(--cyan); }
+.ctrl-input:disabled { opacity:.4;cursor:not-allowed;background:var(--bg3); }
+
+select{
+  background:var(--bg2);border:1px solid var(--border);color:var(--text);
+  padding:4px 8px;font-size:12px;border-radius:3px;cursor:pointer;font-family:var(--font);
+}
+
+.speed-btn {
+  padding:5px 11px;border:1px solid var(--border);background:var(--bg2);
+  color:var(--muted);font-family:var(--font);font-size:13px;font-weight:700;
+  cursor:pointer;border-radius:3px;transition:all .15s;
+}
+.speed-btn:hover { border-color:var(--cyan);color:var(--cyan); }
+.speed-btn.active { border-color:var(--cyan);color:var(--cyan);background:rgba(2,132,199,.1); }
+.speed-btn:disabled { opacity:.4;cursor:not-allowed; }
+
+.save-btn {
+  padding:8px 20px;border:1px solid var(--border);background:var(--bg3);
+  color:var(--muted);font-family:var(--font);font-size:12px;font-weight:700;
+  cursor:pointer;border-radius:4px;transition:all .2s;letter-spacing:1px;
+  white-space:nowrap;
+}
+.save-btn:hover:not(:disabled) { border-color:var(--amber);color:var(--amber);background:rgba(180,83,9,.07); }
+.save-btn.active { border-color:var(--green);color:var(--green);background:rgba(22,163,74,.08); }
+.save-btn:disabled { opacity:.35;cursor:not-allowed; }
+
+.laser-prog-btn {
+  padding:6px 18px;border:1px solid var(--border);background:var(--bg3);
+  color:var(--muted);font-family:var(--font);font-size:13px;font-weight:700;
+  cursor:pointer;border-radius:4px;transition:all .2s;
+}
+.laser-prog-btn:hover { border-color:var(--accent);color:var(--accent); }
+.laser-prog-btn.active { border-color:var(--accent);color:var(--accent);background:rgba(192,57,15,.08); }
+.laser-prog-btn:disabled { opacity:.4;cursor:not-allowed; }
+
+.laser-step {
+  font-size:10px;padding:3px 8px;border-radius:12px;
+  border:1px solid var(--border);color:var(--muted);background:var(--bg3);
+  white-space:nowrap;
+}
+.laser-step.done    { border-color:var(--green); color:var(--green); background:rgba(22,163,74,.07); }
+.laser-step.current { border-color:var(--accent);color:var(--accent);background:rgba(192,57,15,.1);font-weight:700; }
+
+/* ── Double slider ── */
+.dslider-wrap {
+  display:flex;align-items:center;gap:8px;margin-bottom:10px;
+  padding:8px 10px;background:var(--bg3);border-radius:4px;border:1px solid var(--border);
+}
+.dslider-wrap label { font-size:10px;color:var(--muted);white-space:nowrap; }
+.dslider-container {
+  flex:1;position:relative;height:20px;
+}
+.dslider-track {
+  position:absolute;top:50%;left:0;right:0;height:4px;
+  background:var(--border);border-radius:2px;transform:translateY(-50%);
+}
+.dslider-range {
+  position:absolute;top:50%;height:4px;
+  background:var(--cyan);border-radius:2px;transform:translateY(-50%);
+  pointer-events:none;
+}
+.dslider-thumb {
+  position:absolute;top:50%;width:14px;height:14px;
+  background:#fff;border:2px solid var(--cyan);border-radius:50%;
+  transform:translate(-50%,-50%);cursor:grab;z-index:2;
+  transition:border-color .15s,box-shadow .15s;
+}
+.dslider-thumb:hover,.dslider-thumb.dragging {
+  border-color:var(--accent);box-shadow:0 0 0 3px rgba(2,132,199,.2);
+}
+.dslider-labels {
+  display:flex;justify-content:space-between;
+  font-size:10px;color:var(--cyan);font-variant-numeric:tabular-nums;
+  margin-top:2px;
+}
+.dslider-labels span { min-width:60px; }
+.dslider-labels span:last-child { text-align:right; }
+
+/* ── Modale plein écran jauge ── */
+.fs-modal {
+  display:none;position:fixed;inset:0;z-index:1000;
+  background:#f4f5f7;
+  flex-direction:row;
+}
+.fs-modal.open { display:flex; }
+.fs-main {
+  flex:1;display:flex;flex-direction:column;padding:12px;min-width:0;
+}
+.fs-sidebar {
+  width:200px;flex-shrink:0;display:flex;flex-direction:column;gap:8px;
+  padding:12px;border-left:1px solid var(--border);background:#fff;overflow-y:auto;
+}
+.fs-topbar {
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:8px;flex-shrink:0;
+}
+.fs-title { font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--cyan); }
+.fs-close {
+  padding:5px 14px;border:1px solid var(--border);background:var(--bg3);
+  color:var(--muted);font-family:var(--font);font-size:12px;font-weight:700;
+  cursor:pointer;border-radius:4px;transition:all .2s;
+}
+.fs-close:hover { border-color:var(--red);color:var(--red); }
+.fs-canvas-wrap { flex:1;position:relative;border:1px solid var(--border);border-radius:6px;background:#fff;overflow:hidden; }
+.fs-canvas-wrap canvas { width:100%!important;height:100%!important;display:block; }
+.fs-controls {
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:6px 0;flex-shrink:0;
+}
+.fullscreen-btn {
+  padding:2px 8px;border:1px solid var(--border);background:transparent;
+  color:var(--muted);font-family:var(--font);font-size:11px;cursor:pointer;
+  border-radius:3px;transition:all .2s;
+}
+.fullscreen-btn:hover { border-color:var(--cyan);color:var(--cyan); }
+
+.cfg-field {
+  display:flex;flex-direction:column;gap:4px;
+  padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+}
+.cfg-cur {
+  font-size:20px;font-weight:700;color:var(--cyan);font-variant-numeric:tabular-nums;
+  line-height:1.2;word-break:break-all;
+}
+.cfg-lbl {
+  font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;
+}
+.cfg-inp {
+  font-size:12px;padding:4px 8px;
+}
+
+.analysis-subtab {
+  padding:10px 20px;border:none;background:transparent;color:var(--muted);
+  font-family:var(--font);font-size:13px;font-weight:700;cursor:pointer;
+  border-bottom:2px solid transparent;transition:all .2s;margin-bottom:-1px;
+}
+.analysis-subtab:hover { color:var(--text); }
+.analysis-subtab.active { color:var(--accent);border-bottom-color:var(--accent); }
+
+.session-btn {
+  padding:8px 16px;border:1px solid var(--border);background:var(--bg3);
+  color:var(--text);font-family:var(--font);font-size:12px;font-weight:700;
+  cursor:pointer;border-radius:6px;transition:all .2s;text-align:center;min-width:160px;
+}
+.session-btn:hover { border-color:var(--cyan);background:rgba(2,132,199,.06); }
+.session-btn.active { border-color:var(--cyan);background:rgba(2,132,199,.08); }
+
+.jauge-vals{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+.gauge-card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:6px;padding:18px 20px;position:relative;overflow:hidden;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);
+}
+.gauge-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--accent);}
+.gauge-card.p2::before{background:var(--cyan);}
+.gc-label{font-size:12px;color:var(--muted);letter-spacing:2px;margin-bottom:8px;text-transform:uppercase;}
+.gc-val  {font-size:38px;font-weight:700;line-height:1;color:var(--text);}
+.gc-unit {font-size:14px;color:var(--muted);margin-top:4px;}
+.gc-ts   {font-size:11px;color:var(--muted);margin-top:8px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><img src="/logo_apate.png" alt="APATE"></div>
+
+  <div class="header-center">
+    <button class="run-btn stopped" id="btn-quad" onclick="toggleQuad()">
+      <div class="dot"></div>
+      <span id="btn-quad-txt">START QUAD</span>
+    </button>
+    <button class="run-btn stopped" id="btn-jauge" onclick="toggleJauge()">
+      <div class="dot"></div>
+      <span id="btn-jauge-txt">START JAUGE</span>
+    </button>
+    <div class="dpill" id="pill-quad">QUAD</div>
+    <div class="dpill" id="pill-jauge">JAUGE</div>
+  </div>
+
+  <div class="header-right">
+    <button class="viewer-link-btn" onclick="copyViewerLink()" title="Copier un lien lecture seule à partager">🔗 Lien lecture seule</button>
+    <span><span class="hdot" id="hdot"></span><span id="hconn">CONNEXION...</span></span>
+    <span id="htime">–</span>
+    <span id="hlatency">–</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('quad')">QUAD MKS</div>
+  <div class="tab" onclick="showTab('jauge')">JAUGE INFICON</div>
+  <div class="tab" onclick="showTab('analysis')">DATA ANALYSIS</div>
+  <div class="tab" onclick="showTab('config')">⚙ CONFIG</div>
+</div>
+
+<!-- ══════ PAGE QUAD ══════ -->
+<div class="page active" id="page-quad">
+
+  <!-- Contrôles QUAD -->
+  <div class="panel" style="margin-bottom:12px">
+    <div class="panel-title">Paramètres du scan</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+
+      <div class="ctrl-group">
+        <div class="ctrl-group-label">Mass Min</div>
+        <input class="ctrl-input" id="cfg-mmin" type="number" value="3" min="1" max="300" step="1">
+      </div>
+      <div class="ctrl-group">
+        <div class="ctrl-group-label">Mass Max</div>
+        <input class="ctrl-input" id="cfg-mmax" type="number" value="70" min="2" max="300" step="1">
+      </div>
+      <div class="ctrl-group">
+        <div class="ctrl-group-label">Nb scans max</div>
+        <input class="ctrl-input" id="cfg-nscans" type="number" value="999" min="1" max="9999" step="1">
+      </div>
+
+      <div class="ctrl-group">
+        <div class="ctrl-group-label">Vitesse scan</div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;" id="speed-btns">
+          <button class="speed-btn" onclick="selectSpeed(this,'0')">0</button>
+          <button class="speed-btn active" onclick="selectSpeed(this,'1')">1</button>
+          <button class="speed-btn" onclick="selectSpeed(this,'2')">2</button>
+          <button class="speed-btn" onclick="selectSpeed(this,'3')">3</button>
+          <button class="speed-btn" onclick="selectSpeed(this,'4')">4</button>
+          <button class="speed-btn" onclick="selectSpeed(this,'5')">5</button>
+          <button class="speed-btn" onclick="selectSpeed(this,'6')">6</button>
+          <button class="speed-btn" onclick="selectSpeed(this,'7')">7</button>
+          <button class="speed-btn" onclick="selectSpeed(this,'8')">8</button>
+        </div>
+      </div>
+
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
+        <button class="save-btn" id="btn-save" onclick="toggleSave()" disabled title="Démarrer le scan d'abord">
+          <span id="btn-save-icon">💾</span> <span id="btn-save-txt">SAVE DATA</span>
+        </button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;">
+      <span style="font-size:10px;color:var(--muted)">💾 Nom fichier :</span>
+      <input type="text" id="quad-prefix" placeholder="préfixe..." style="padding:3px 8px;border:1px solid var(--border);border-radius:3px;font-size:11px;width:100px;background:var(--bg2)">
+      <span style="font-size:11px;color:var(--muted);font-style:italic" id="quad-fname-preview">SCAN_date_heure</span>
+      <input type="text" id="quad-suffix" placeholder="suffixe..." style="padding:3px 8px;border:1px solid var(--border);border-radius:3px;font-size:11px;width:100px;background:var(--bg2)">
+      <span style="font-size:10px;color:var(--muted)">.xlsx</span>
+    </div>
+    <div style="margin-top:10px;font-size:10px;color:var(--muted)" id="save-info">—</div>
+  </div>
+
+  <div class="quad-info">
+    <div class="qi"><div class="qi-label">Cycle</div><div class="qi-val" id="q-cycle">–</div></div>
+    <div class="qi"><div class="qi-label">Points</div><div class="qi-val" id="q-pts">–</div></div>
+    <div class="qi"><div class="qi-label">Masse min</div><div class="qi-val" id="q-mmin">–</div></div>
+    <div class="qi"><div class="qi-label">Masse max</div><div class="qi-val" id="q-mmax">–</div></div>
+    <div class="qi"><div class="qi-label">Signal max</div><div class="qi-val" id="q-smax">–</div></div>
+    <div class="qi"><div class="qi-label">Temps cycle</div><div class="qi-val" id="q-tc">–</div></div>
+    <div class="qi"><div class="qi-label">Temps total</div><div class="qi-val" id="q-tt">–</div></div>
+  </div>
+
+  <div class="peaks-bar">
+    <div class="peaks-title">ESPÈCES CARACTÉRISTIQUES — signal du cycle courant</div>
+    <div class="peaks-list" id="peaks-list"><span style="color:var(--muted);font-size:11px">En attente...</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Signal vs Masse — linéaire <span id="scan-label-lin">—</span></div>
+    <div class="chart-controls">
+      <span class="ctrl-label">Zoom</span>
+      <button class="ctrl-btn" onclick="resetZoom(chartLin)">Reset</button>
+      <div class="ctrl-sep"></div>
+      <span class="ctrl-label" style="font-size:10px">Scroll=zoom • Drag=pan</span>
+    </div>
+    <div id="standby-lin" class="standby">
+      <div class="standby-icon">◈</div>
+      <div class="standby-txt">SCAN NON DÉMARRÉ</div>
+      <button class="standby-btn" onclick="toggleQuad()">▶ START QUAD</button>
+    </div>
+    <div class="chart-wrap" id="wrap-lin" style="display:none"><canvas id="chart-lin"></canvas></div>
+    <div class="hint">Scan courant (cyan) — Scan précédent (gris pointillé)</div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Signal vs Masse — log₁₀ <span id="scan-label-log">—</span></div>
+    <div class="chart-controls">
+      <span class="ctrl-label">Zoom</span>
+      <button class="ctrl-btn" onclick="resetZoom(chartLog)">Reset</button>
+      <div class="ctrl-sep"></div>
+      <span class="ctrl-label" style="font-size:10px">Scroll=zoom • Drag=pan</span>
+    </div>
+    <div id="standby-log" class="standby">
+      <div class="standby-icon">◈</div>
+      <div class="standby-txt">SCAN NON DÉMARRÉ</div>
+      <button class="standby-btn" onclick="toggleQuad()">▶ START QUAD</button>
+    </div>
+    <div class="chart-wrap" id="wrap-log" style="display:none"><canvas id="chart-log"></canvas></div>
+    <div class="hint">Scroll pour zoomer • Clic-glisser pour naviguer</div>
+  </div>
+
+  <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:10px">
+    Historique des scans
+  </div>
+  <div class="scan-list" id="scan-list"><span style="font-size:11px;color:var(--muted)">Aucun scan terminé</span></div>
+  <div id="hist-section" style="display:none">
+    <div class="panel">
+      <div class="panel-title">Scan sélectionné — linéaire <span id="hist-label-lin">—</span></div>
+      <div class="chart-controls"><button class="ctrl-btn" onclick="resetZoom(chartHistLin)">Reset zoom</button></div>
+      <div class="chart-wrap"><canvas id="chart-hist-lin"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Scan sélectionné — log₁₀ <span id="hist-label-log">—</span></div>
+      <div class="chart-controls"><button class="ctrl-btn" onclick="resetZoom(chartHistLog)">Reset zoom</button></div>
+      <div class="chart-wrap"><canvas id="chart-hist-log"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ PAGE JAUGE ══════ -->
+<div class="page" id="page-jauge">
+
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;">
+    <span style="font-size:10px;color:var(--muted)">💾 Nom fichier :</span>
+    <input type="text" id="jauge-prefix" placeholder="préfixe..." style="padding:3px 8px;border:1px solid var(--border);border-radius:3px;font-size:11px;width:100px;background:var(--bg2)">
+    <span style="font-size:11px;color:var(--muted);font-style:italic" id="jauge-fname-preview">JAUGE_date_heure</span>
+    <input type="text" id="jauge-suffix" placeholder="suffixe..." style="padding:3px 8px;border:1px solid var(--border);border-radius:3px;font-size:11px;width:100px;background:var(--bg2)">
+    <span style="font-size:10px;color:var(--muted)">.csv / .xlsx</span>
+    <span style="font-size:11px;margin-left:6px" id="jauge-save-info">—</span>
+  </div>
+
+  <!-- Grille principale : graphes à gauche, laser à droite -->
+  <div style="display:grid;grid-template-columns:1fr 200px;gap:16px;align-items:start">
+
+    <!-- ── Colonne gauche : jauges ── -->
+    <div>
+
+      <div class="jauge-vals">
+        <div class="gauge-card">
+          <div class="gc-label">PRESSION 1</div>
+          <div class="gc-val" id="j-p1" style="color:var(--accent)">–</div>
+          <div class="gc-unit">mbar</div>
+          <div class="gc-ts"  id="j-ts1">–</div>
+        </div>
+        <div class="gauge-card p2">
+          <div class="gc-label">PRESSION 2</div>
+          <div class="gc-val" id="j-p2" style="color:var(--cyan)">–</div>
+          <div class="gc-unit">mbar</div>
+          <div class="gc-ts"  id="j-ts2">–</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Pression 1 — historique
+          <button class="fullscreen-btn" onclick="openFullscreen('j1')" title="Plein écran">⛶ Plein écran</button>
+        </div>
+        <div class="chart-controls">
+          <span class="ctrl-label">Fenêtre</span>
+          <input class="ctrl-input" id="win-j1" type="number" value="1" min="0.1" max="600" step="0.5" style="width:70px" oninput="setWindowCustom('j1')">
+          <select id="wunit-j1" style="height:26px" onchange="setWindowCustom('j1')">
+            <option value="1">min</option>
+            <option value="60">h</option>
+          </select>
+          <button class="ctrl-btn active" id="wbtn-tout-j1" onclick="setWindow(0,'j1',this)">Tout</button>
+          <div class="ctrl-sep"></div>
+          <button class="ctrl-btn" onclick="resetJaugeZoom('j1')">Reset zoom</button>
+        </div>
+        <div class="dslider-wrap">
+          <label>Position</label>
+          <div style="flex:1">
+            <div class="dslider-container" id="dslider-j1">
+              <div class="dslider-track"></div>
+              <div class="dslider-range" id="drange-j1"></div>
+              <div class="dslider-thumb" id="dthumb-j1-lo" data-id="j1" data-side="lo"></div>
+              <div class="dslider-thumb" id="dthumb-j1-hi" data-id="j1" data-side="hi"></div>
+            </div>
+            <div class="dslider-labels">
+              <span id="dlabel-j1-lo">Début</span>
+              <span id="dlabel-j1-hi">En direct</span>
+            </div>
+          </div>
+        </div>
+        <div id="standby-j1" class="standby">
+          <div class="standby-icon">◈</div>
+          <div class="standby-txt">JAUGE NON DÉMARRÉE</div>
+          <button class="standby-btn" onclick="toggleJauge()">▶ START JAUGE</button>
+        </div>
+        <div class="chart-wrap" id="wrap-j1" style="display:none"><canvas id="canvas-j1" style="width:100%;height:100%;display:block"></canvas></div>
+        <div class="hint">Scroll=zoom • Drag=pan • Double-clic=reset zoom</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Pression 2 — historique
+          <button class="fullscreen-btn" onclick="openFullscreen('j2')" title="Plein écran">⛶ Plein écran</button>
+        </div>
+        <div class="chart-controls">
+          <span class="ctrl-label">Fenêtre</span>
+          <input class="ctrl-input" id="win-j2" type="number" value="1" min="0.1" max="600" step="0.5" style="width:70px" oninput="setWindowCustom('j2')">
+          <select id="wunit-j2" style="height:26px" onchange="setWindowCustom('j2')">
+            <option value="1">min</option>
+            <option value="60">h</option>
+          </select>
+          <button class="ctrl-btn" id="wbtn-tout-j2" onclick="setWindow(0,'j2',this)">Tout</button>
+          <div class="ctrl-sep"></div>
+          <button class="ctrl-btn" onclick="resetJaugeZoom('j2')">Reset zoom</button>
+        </div>
+        <div class="dslider-wrap">
+          <label>Position</label>
+          <div style="flex:1">
+            <div class="dslider-container" id="dslider-j2">
+              <div class="dslider-track"></div>
+              <div class="dslider-range" id="drange-j2"></div>
+              <div class="dslider-thumb" id="dthumb-j2-lo" data-id="j2" data-side="lo"></div>
+              <div class="dslider-thumb" id="dthumb-j2-hi" data-id="j2" data-side="hi"></div>
+            </div>
+            <div class="dslider-labels">
+              <span id="dlabel-j2-lo">Début</span>
+              <span id="dlabel-j2-hi">En direct</span>
+            </div>
+          </div>
+        </div>
+        <div id="standby-j2" class="standby">
+          <div class="standby-icon">◈</div>
+          <div class="standby-txt">JAUGE NON DÉMARRÉE</div>
+          <button class="standby-btn" onclick="toggleJauge()">▶ START JAUGE</button>
+        </div>
+        <div class="chart-wrap" id="wrap-j2" style="display:none"><canvas id="canvas-j2" style="width:100%;height:100%;display:block"></canvas></div>
+        <div class="hint">Scroll=zoom • Drag=pan • Double-clic=reset zoom</div>
+      </div>
+
+      <!-- Sessions de mesure -->
+      <div class="panel">
+        <div class="panel-title">Sessions de mesure — depuis le démarrage du serveur</div>
+        <div id="jauge-sessions" style="display:flex;gap:8px;flex-wrap:wrap;min-height:36px;align-items:center;">
+          <span style="font-size:12px;color:var(--muted)">Aucune session enregistrée</span>
+        </div>
+      </div>
+
+    </div><!-- fin colonne gauche -->
+
+    <!-- ── Colonne droite : laser (sticky) ── -->
+    <div style="position:sticky;top:70px">
+
+      <div class="panel" id="laser-panel" style="padding:12px">
+        <div class="panel-title" style="font-size:10px;margin-bottom:8px">
+          LASER
+          <div style="display:flex;align-items:center;gap:4px">
+            <div class="dpill" id="pill-laser" style="font-size:9px;padding:1px 6px">LASER</div>
+            <span id="laser-elapsed" style="font-size:10px;color:var(--muted)"></span>
+          </div>
+        </div>
+
+        <!-- Programme -->
+        <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px">
+          <button class="laser-prog-btn active" id="prog-siderite"  onclick="selectProg('siderite')" style="width:100%;text-align:left;padding:5px 10px;font-size:11px">Sidérite</button>
+          <button class="laser-prog-btn"        id="prog-chondrite" onclick="selectProg('chondrite')" style="width:100%;text-align:left;padding:5px 10px;font-size:11px">Chondrite</button>
+          <button class="laser-prog-btn"        id="prog-custom"    onclick="selectProg('custom')" style="width:100%;text-align:left;padding:5px 10px;font-size:11px">Personnalisé</button>
+        </div>
+
+        <!-- Puissance custom -->
+        <div class="ctrl-group" id="custom-power-group" style="display:none;margin-bottom:8px">
+          <div class="ctrl-group-label" style="font-size:9px">Puissance max (mA)</div>
+          <input class="ctrl-input" id="custom-power" type="number" value="5000" min="100" max="10000" step="100" style="width:100%;font-size:12px;padding:4px 8px;margin-top:3px"
+                 oninput="renderLaserMarkers('custom'); renderLaserSteps('custom', null)">
+        </div>
+
+        <!-- Bouton START/STOP -->
+        <button class="run-btn stopped" id="btn-laser" onclick="toggleLaser()" style="width:100%;justify-content:center;margin-bottom:12px;padding:7px;font-size:11px">
+          <div class="dot"></div>
+          <span id="btn-laser-txt">START LASER</span>
+        </button>
+
+        <!-- Valeur + barre verticale -->
+        <div style="display:flex;gap:6px;height:160px;margin-bottom:8px">
+          <!-- Barre verticale -->
+          <div style="flex:1;position:relative;background:var(--bg3);border:1px solid var(--border);border-radius:4px;overflow:hidden;display:flex;flex-direction:column-reverse">
+            <div id="laser-power-bar" style="width:100%;height:0%;background:linear-gradient(0deg,#16a34a,#f59e0b,#c0390f);transition:height .5s;border-radius:3px"></div>
+            <div style="position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none" id="laser-markers"></div>
+          </div>
+          <!-- Graduations -->
+          <div style="display:flex;flex-direction:column;justify-content:space-between;font-size:9px;color:var(--muted);width:22px;text-align:right">
+            <span>10k</span><span>8k</span><span>6k</span><span>4k</span><span>2k</span><span>0</span>
+          </div>
+        </div>
+
+        <!-- Valeur numérique -->
+        <div style="text-align:center;margin-bottom:8px">
+          <span id="laser-power-val" style="font-size:22px;font-weight:700;color:var(--accent)">0</span>
+          <span style="font-size:11px;color:var(--muted)"> mA</span>
+        </div>
+
+        <!-- Progression -->
+        <div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:3px">
+            <span id="laser-phase" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%">—</span>
+            <span id="laser-progress-val">0 %</span>
+          </div>
+          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;height:6px;overflow:hidden">
+            <div id="laser-progress-bar" style="height:100%;width:0%;background:var(--cyan);transition:width .5s;border-radius:3px"></div>
+          </div>
+        </div>
+
+        <!-- Pills paliers -->
+        <div id="laser-steps" style="display:flex;gap:3px;flex-wrap:wrap"></div>
+
+      </div>
+
+      <!-- Horloge -->
+      <div class="panel" style="padding:12px;text-align:center;margin-top:0">
+        <div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Heure locale</div>
+        <div id="local-clock" style="font-size:26px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:1px">--:--:--</div>
+        <div id="local-date" style="font-size:10px;color:var(--muted);margin-top:4px"></div>
+      </div>
+
+    </div><!-- fin colonne droite -->
+
+  </div><!-- fin grille -->
+</div>
+
+<!-- ══════ MODALE PLEIN ÉCRAN JAUGE ══════ -->
+<div class="fs-modal" id="fs-modal">
+
+  <!-- Zone graphe principale -->
+  <div class="fs-main">
+    <div class="fs-topbar">
+      <div class="fs-title" id="fs-title">Pression 1</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="fs-controls">
+          <span class="ctrl-label">Fenêtre</span>
+          <input class="ctrl-input" id="fs-win" type="number" value="1" min="0.1" max="600" step="0.5" style="width:60px;font-size:12px" oninput="fsSetWindow()">
+          <select id="fs-wunit" style="height:26px" onchange="fsSetWindow()">
+            <option value="1">min</option>
+            <option value="60">h</option>
+          </select>
+          <button class="ctrl-btn active" id="fs-btn-tout" onclick="fsSetWindowAll()">Tout</button>
+          <div class="ctrl-sep"></div>
+          <button class="ctrl-btn" onclick="resetJaugeZoom(fsChannel); _jDirty[fsChannel]=true">Reset zoom</button>
+        </div>
+        <button class="fs-close" onclick="closeFullscreen()">✕ Fermer</button>
+      </div>
+    </div>
+    <div class="dslider-wrap" style="flex-shrink:0">
+      <label>Position</label>
+      <div style="flex:1">
+        <div class="dslider-container" id="dslider-fs">
+          <div class="dslider-track"></div>
+          <div class="dslider-range" id="drange-fs"></div>
+          <div class="dslider-thumb" id="dthumb-fs-lo" data-id="fs" data-side="lo"></div>
+          <div class="dslider-thumb" id="dthumb-fs-hi" data-id="fs" data-side="hi"></div>
+        </div>
+        <div class="dslider-labels">
+          <span id="dlabel-fs-lo">Début</span>
+          <span id="dlabel-fs-hi">En direct</span>
+        </div>
+      </div>
+    </div>
+    <!-- Canvas plein écran — on dessine dedans via drawJaugeCanvas avec un id spécial -->
+    <div class="fs-canvas-wrap" id="fs-canvas-wrap">
+      <canvas id="canvas-fs" style="width:100%;height:100%;display:block;cursor:crosshair"></canvas>
+    </div>
+    <div class="hint" style="flex-shrink:0;margin-top:6px">Scroll=zoom • Drag=pan • Double-clic=reset zoom</div>
+  </div>
+
+  <!-- Sidebar : laser + horloge -->
+  <div class="fs-sidebar">
+
+    <!-- Valeur pression en direct -->
+    <div style="text-align:center;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px">
+      <div style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px" id="fs-p-label">PRESSION 1</div>
+      <div id="fs-p-val" style="font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1">–</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:2px">mbar</div>
+    </div>
+
+    <!-- Laser compact -->
+    <div style="padding:10px;background:#fff;border:1px solid var(--border);border-radius:6px">
+      <div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">LASER</div>
+      <div style="display:flex;gap:5px;height:120px;margin-bottom:6px">
+        <div style="flex:1;position:relative;background:var(--bg3);border:1px solid var(--border);border-radius:4px;overflow:hidden;display:flex;flex-direction:column-reverse">
+          <div id="fs-laser-bar" style="width:100%;height:0%;background:linear-gradient(0deg,#16a34a,#f59e0b,#c0390f);transition:height .5s"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;justify-content:space-between;font-size:8px;color:var(--muted);width:18px;text-align:right">
+          <span>10k</span><span>5k</span><span>0</span>
+        </div>
+      </div>
+      <div style="text-align:center">
+        <span id="fs-laser-val" style="font-size:20px;font-weight:700;color:var(--accent)">0</span>
+        <span style="font-size:10px;color:var(--muted)"> mA</span>
+      </div>
+      <div id="fs-laser-phase" style="font-size:9px;color:var(--muted);text-align:center;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</div>
+    </div>
+
+    <!-- Horloge -->
+    <div style="padding:10px;background:#fff;border:1px solid var(--border);border-radius:6px;text-align:center">
+      <div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Heure locale</div>
+      <div id="fs-clock" style="font-size:22px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums">--:--:--</div>
+      <div id="fs-date" style="font-size:9px;color:var(--muted);margin-top:3px"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════ PAGE DATA ANALYSIS ══════ -->
+<div class="page" id="page-analysis" style="padding:0;max-width:none;">
+  <div style="display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--bg2);padding:0 16px;">
+    <button class="analysis-subtab active" id="asub-0" onclick="showAnalysisTool(0)">⚗ Analyseur Signal</button>
+    <button class="analysis-subtab" id="asub-1" onclick="showAnalysisTool(1)">📌 Pressure Annotator</button>
+    <button class="analysis-subtab" id="asub-2" onclick="showAnalysisTool(2)">📉 Décroissance CO₂</button>
+    <button class="analysis-subtab" id="asub-3" onclick="showAnalysisTool(3)">📁 Fichiers DATA</button>
+  </div>
+  <div style="position:relative;height:calc(100vh - 110px)">
+    <iframe id="atool-0" src="/analyse_quad.html" style="position:absolute;inset:0;width:100%;height:100%;border:none;display:block"></iframe>
+    <iframe id="atool-1" src="/pressure_annotator.html" style="position:absolute;inset:0;width:100%;height:100%;border:none;display:none"></iframe>
+    <iframe id="atool-2" src="/co2_decroissance.html" style="position:absolute;inset:0;width:100%;height:100%;border:none;display:none"></iframe>
+    <div id="atool-3" style="position:absolute;inset:0;width:100%;height:100%;overflow:auto;display:none;padding:20px 24px;background:var(--bg)">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+        <div>
+          <div style="font-size:14px;font-weight:700;letter-spacing:.5px;">📁 Fichiers du dossier DATA</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Consultation et téléchargement — disponible aussi en mode lecture seule</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="datafiles-filter" placeholder="filtrer par nom..." class="ctrl-input" style="width:160px;font-size:12px;" oninput="renderDataFiles()">
+          <button class="ctrl-btn" onclick="loadDataFiles()">↻ Actualiser</button>
+        </div>
+      </div>
+      <div id="datafiles-status" style="font-size:12px;color:var(--muted);margin-bottom:10px;">Chargement...</div>
+      <div class="panel" style="padding:0;overflow:hidden;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="background:var(--bg3);text-align:left;">
+              <th style="padding:9px 14px;font-weight:700;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.5px;">Fichier</th>
+              <th style="padding:9px 14px;font-weight:700;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.5px;">Modifié</th>
+              <th style="padding:9px 14px;font-weight:700;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.5px;">Taille</th>
+              <th style="padding:9px 14px;"></th>
+            </tr>
+          </thead>
+          <tbody id="datafiles-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ PAGE CONFIG ══════ -->
+<div class="page" id="page-config" style="padding:0;max-width:none;height:calc(100vh - 90px)">
+  <iframe src="/config.html" style="width:100%;height:100%;border:none;display:block"></iframe>
+</div>
+<script src="/quad.js"></script>
+<script src="/jauge.js"></script>
+<script src="/ws.js"></script>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Configuration — Lab Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#f4f5f7;--bg2:#ffffff;--bg3:#eef0f3;--border:#d0d5dd;
+  --accent:#c0390f;--cyan:#0284c7;--green:#16a34a;--red:#dc2626;
+  --text:#111827;--muted:#6b7280;--font:'Consolas','Courier New',monospace;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;padding:24px;min-height:100vh;}
+
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;}
+.title{font-size:18px;font-weight:700;color:var(--text);}
+.subtitle{font-size:12px;color:var(--muted);margin-top:3px;}
+code{background:var(--bg3);padding:1px 6px;border-radius:3px;font-family:var(--font);}
+
+.save-row{display:flex;gap:10px;align-items:center;}
+#cfg-status{font-size:13px;font-weight:700;}
+.save-btn{
+  padding:8px 20px;border:1px solid var(--green);background:rgba(22,163,74,.08);
+  color:var(--green);font-family:var(--font);font-size:13px;font-weight:700;
+  cursor:pointer;border-radius:4px;transition:all .2s;
+}
+.save-btn:hover{background:rgba(22,163,74,.18);}
+
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:18px 20px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.05);}
+.panel-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--cyan);margin-bottom:14px;}
+
+.grid{display:grid;gap:12px;}
+.g3{grid-template-columns:repeat(3,1fr);}
+.g2{grid-template-columns:repeat(2,1fr);}
+.g1{grid-template-columns:1fr;}
+
+.cfg-field{
+  background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+  padding:12px 14px;display:flex;flex-direction:column;gap:5px;
+}
+.cfg-cur{
+  font-size:22px;font-weight:700;color:var(--cyan);
+  font-variant-numeric:tabular-nums;line-height:1.2;word-break:break-all;min-height:28px;
+}
+.cfg-cur.path{font-size:14px;}
+.cfg-lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;}
+.cfg-sep{height:1px;background:var(--border);margin:4px 0;}
+.cfg-inp{
+  padding:5px 9px;border:1px solid var(--border);border-radius:3px;
+  font-family:var(--font);font-size:13px;background:var(--bg2);color:var(--text);
+  width:100%;transition:border-color .2s;
+}
+.cfg-inp:focus{outline:none;border-color:var(--cyan);}
+
+.warn{padding:11px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;font-size:12px;color:#92400e;margin-top:4px;}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="title">⚙ Configuration</div>
+    <div class="subtitle">Sauvegardée dans <code>config.json</code> — chargée automatiquement au démarrage du serveur</div>
+  </div>
+  <div class="save-row">
+    <span id="cfg-status"></span>
+    <button class="save-btn" onclick="saveConfig()">💾 Sauvegarder</button>
+  </div>
+</div>
+
+<!-- QUAD -->
+<div class="panel">
+  <div class="panel-title">QUAD MKS</div>
+  <div class="grid g3">
+
+    <div class="cfg-field">
+      <div class="cfg-lbl">Adresse IP</div>
+      <div class="cfg-cur" id="cur-quad-host"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-quad-host" placeholder="169.254.248.184">
+    </div>
+    <div class="cfg-field">
+      <div class="cfg-lbl">Port TCP</div>
+      <div class="cfg-cur" id="cur-quad-port"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-quad-port" type="number" placeholder="10014">
+    </div>
+    <div class="cfg-field">
+      <div class="cfg-lbl">Vitesse (0–8)</div>
+      <div class="cfg-cur" id="cur-quad-speed"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-quad-speed" type="number" min="0" max="8">
+    </div>
+    <div class="cfg-field">
+      <div class="cfg-lbl">Masse min (m/z)</div>
+      <div class="cfg-cur" id="cur-quad-startMass"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-quad-startMass" type="number" step="0.5">
+    </div>
+    <div class="cfg-field">
+      <div class="cfg-lbl">Masse max (m/z)</div>
+      <div class="cfg-cur" id="cur-quad-endMass"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-quad-endMass" type="number" step="0.5">
+    </div>
+    <div class="cfg-field">
+      <div class="cfg-lbl">Nb scans max</div>
+      <div class="cfg-cur" id="cur-quad-nScans"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-quad-nScans" type="number">
+    </div>
+
+  </div>
+</div>
+
+<!-- JAUGE -->
+<div class="panel">
+  <div class="panel-title">JAUGE INFICON</div>
+  <div class="grid g3">
+
+    <div class="cfg-field">
+      <div class="cfg-lbl">Port COM Jauge 1</div>
+      <div class="cfg-cur" id="cur-jauge-port1"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-jauge-port1" placeholder="COM3">
+    </div>
+    <div class="cfg-field">
+      <div class="cfg-lbl">Port COM Jauge 2</div>
+      <div class="cfg-cur" id="cur-jauge-port2"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-jauge-port2" placeholder="COM4">
+    </div>
+    <div class="cfg-field">
+      <div class="cfg-lbl">Baud rate</div>
+      <div class="cfg-cur" id="cur-jauge-baud"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-jauge-baud" type="number">
+    </div>
+
+  </div>
+</div>
+
+<!-- LASER -->
+<div class="panel">
+  <div class="panel-title">LASER</div>
+  <div class="grid g3">
+
+    <div class="cfg-field">
+      <div class="cfg-lbl">Port COM Laser</div>
+      <div class="cfg-cur" id="cur-laser-port"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-laser-port" placeholder="COM7">
+    </div>
+    <div class="cfg-field">
+      <div class="cfg-lbl">Baud rate</div>
+      <div class="cfg-cur" id="cur-laser-baud"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-laser-baud" type="number">
+    </div>
+
+  </div>
+</div>
+
+<!-- SAUVEGARDE -->
+<div class="panel">
+  <div class="panel-title">SAUVEGARDE</div>
+  <div class="grid g1">
+
+    <div class="cfg-field">
+      <div class="cfg-lbl">Dossier de sauvegarde (chemin absolu ou relatif)</div>
+      <div class="cfg-cur path" id="cur-saveDir"></div>
+      <div class="cfg-sep"></div>
+      <input class="cfg-inp" id="cfg-saveDir" placeholder="DATA">
+    </div>
+
+  </div>
+</div>
+
+<div class="warn">
+  ⚠ Les changements prennent effet au <b>prochain démarrage</b> du QUAD, de la Jauge ou du Laser — pas besoin de redémarrer le serveur.
+</div>
+
+<script>
+const FIELDS = [
+  ['quad-host',      'quad',  'host',      false],
+  ['quad-port',      'quad',  'port',      true ],
+  ['quad-startMass', 'quad',  'startMass', true ],
+  ['quad-endMass',   'quad',  'endMass',   true ],
+  ['quad-nScans',    'quad',  'nScans',    true ],
+  ['quad-speed',     'quad',  'speed',     false],
+  ['jauge-port1',    'jauge', 'port1',     false],
+  ['jauge-port2',    'jauge', 'port2',     false],
+  ['jauge-baud',     'jauge', 'baud',      true ],
+  ['laser-port',     'laser', 'port',      false],
+  ['laser-baud',     'laser', 'baud',      true ],
+];
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    const c = await r.json();
+    FIELDS.forEach(([key, section, prop, isNum]) => {
+      const val = c[section]?.[prop] ?? '—';
+      document.getElementById('cur-'+key).textContent = val;
+      document.getElementById('cfg-'+key).value = val === '—' ? '' : val;
+    });
+    const sd = c.saveDir ?? '—';
+    document.getElementById('cur-saveDir').textContent = sd;
+    document.getElementById('cfg-saveDir').value = sd === '—' ? '' : sd;
+  } catch(e) {
+    setStatus('⚠ Erreur de connexion au serveur', 'var(--red)');
+  }
+}
+
+async function saveConfig() {
+  const body = {
+    saveDir: document.getElementById('cfg-saveDir').value.trim(),
+    quad: {
+      host:      document.getElementById('cfg-quad-host').value.trim(),
+      port:      parseInt(document.getElementById('cfg-quad-port').value),
+      startMass: parseFloat(document.getElementById('cfg-quad-startMass').value),
+      endMass:   parseFloat(document.getElementById('cfg-quad-endMass').value),
+      nScans:    parseInt(document.getElementById('cfg-quad-nScans').value),
+      speed:     document.getElementById('cfg-quad-speed').value.trim(),
+    },
+    jauge: {
+      port1: document.getElementById('cfg-jauge-port1').value.trim(),
+      port2: document.getElementById('cfg-jauge-port2').value.trim(),
+      baud:  parseInt(document.getElementById('cfg-jauge-baud').value),
+    },
+    laser: {
+      port: document.getElementById('cfg-laser-port').value.trim(),
+      baud: parseInt(document.getElementById('cfg-laser-baud').value),
+    },
+  };
+  try {
+    const r = await fetch('/api/config', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (d.ok) {
+      setStatus('✓ Sauvegardé', 'var(--green)');
+      loadConfig();
+    } else {
+      setStatus('⚠ ' + (d.error||'Erreur'), 'var(--red)');
+    }
+  } catch(e) {
+    setStatus('⚠ Erreur réseau', 'var(--red)');
+  }
+}
+
+function setStatus(msg, color) {
+  const el = document.getElementById('cfg-status');
+  el.textContent = msg; el.style.color = color;
+  setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+loadConfig();
+</script>
+</body>
+</html>

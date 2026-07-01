@@ -1,0 +1,14 @@
+{
+  "name": "lab-dashboard",
+  "version": "1.0.0",
+  "description": "Lab Dashboard — QUAD MKS + Jauge Inficon",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.1",
+    "serialport": "^12.0.0"
+  }
+}
